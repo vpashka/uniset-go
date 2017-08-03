@@ -1,21 +1,15 @@
 package uniset_test
 
 import (
-//"uniset"
-"testing"
-	"os"
-	"strings"
-	"fmt"
+	"testing"
+	"uniset"
 )
 
 func TestUniSet(t *testing.T) {
-	who := "World!"
 
-	if len (os.Args) > 1 {  /* os.Args[0] - имя команды «hello» или «hello.exe» */
+	var res = uniset.MyFirstFunc()
 
-		who = strings.Join(os.Args[1:], " ")
-
+	if res != 42 {
+		t.Error("Unknown result")
 	}
-	fmt.Println("Hello", who)
-
 }
