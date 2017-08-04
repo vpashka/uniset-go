@@ -10,7 +10,6 @@ import (
 type TestConsumer struct {
 	eventChannel chan uniset.SensorMessage
 	id           uniset.ObjectID
-	count	uint32
 }
 
 func (c *TestConsumer) EventChannel() chan uniset.SensorMessage {
@@ -21,18 +20,28 @@ func (c *TestConsumer) ID() uniset.ObjectID {
 	return c.id
 }
 
-func (c *TestConsumer) ReadMessage( t *testing.T, sid uniset.SensorID, count int, done chan<- bool) {
+func (c *TestConsumer) ReadMessage(t *testing.T, sid uniset.SensorID, count int) int {
 
+	var num int
 	for i := 0; i < count; i++ {
 		msg := <-c.eventChannel
 		if msg.Id != sid {
 			t.Errorf("ReadMessage: sid=%d != %d", msg.Id, sid)
 		}
-		c.count++
+		num++
 		//t.Log(msg.String())
 	}
 
-	done <- true
+	return num
+}
+
+func sendMessages(t *testing.T, ui *uniset.UInterface, msg *uniset.SensorMessage, count int) {
+	for i := 0; i < count; i++ {
+		err := ui.SendSensorMessage(msg)
+		if err != nil {
+			t.Error("SendMessages error: " + err.Error())
+		}
+	}
 }
 
 func TestSubscribe(t *testing.T) {
@@ -42,45 +51,35 @@ func TestSubscribe(t *testing.T) {
 		t.Error(err.Error())
 	}
 
-	consumer := TestConsumer{make(chan uniset.SensorMessage, 10), 100, 0}
+	consumer := TestConsumer{make(chan uniset.SensorMessage, 10), 100}
 
 	ui.Subscribe(10, &consumer)
 
 	if ui.Size() != 1 {
-		t.Errorf("Subscribe: size %d != %d",ui.Size(),1)
+		t.Errorf("Subscribe: size %d != %d", ui.Size(), 1)
 	}
 
 	num := ui.NumberOfCunsumers(10)
 	if num != 1 {
-		t.Errorf("Subscribe: NumberOfCunsumers=%d != %d",num,1)
+		t.Errorf("Subscribe: NumberOfCunsumers=%d != %d", num, 1)
 	}
 
-	done := make(chan bool)
+	sm1 := uniset.SensorMessage{10, 10500, time.Now()}
+	sm2 := uniset.SensorMessage{11, 100500, time.Now()}
 
-	go consumer.ReadMessage(t, 10, 2, done)
+	msgCount := 3
 
-	sm1 := uniset.SensorMessage{10,10500, time.Now()}
-	sm2 := uniset.SensorMessage{11,100500, time.Now()}
+	go sendMessages(t, &ui, &sm1, msgCount)
 
-	err = ui.SendSensorMessage(sm1)
-	if err != nil {
-		t.Error("SendSensorMessage error: " + err.Error())
-	}
-
-	err = ui.SendSensorMessage(sm1)
-	if err != nil {
-		t.Error("SendSensorMessage error: " + err.Error())
-	}
-
-	err = ui.SendSensorMessage(sm2)
+	err = ui.SendSensorMessage(&sm2)
 	if err == nil {
 		t.Error("SendSensorMessage found Unknown sensor?!" + err.Error())
 	}
 
-	<-done
+	rnum := consumer.ReadMessage(t, sm1.Id, msgCount)
 
-	if consumer.count != 2 {
-		t.Errorf("Count of received messages %d != 2", consumer.count)
+	if rnum != msgCount {
+		t.Errorf("Count of received messages %d != 2", rnum)
 	}
 
 }

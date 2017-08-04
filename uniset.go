@@ -95,7 +95,7 @@ func (ui *UInterface) Subscribe(sid SensorID, cons Consumer) (err error) {
 	return nil
 }
 
-func (ui *UInterface) SendSensorMessage(sm SensorMessage) error {
+func (ui *UInterface) SendSensorMessage(sm *SensorMessage) error {
 
 	v, found := ui.askmap[sm.Id]
 	if !found {
@@ -104,7 +104,7 @@ func (ui *UInterface) SendSensorMessage(sm SensorMessage) error {
 	}
 
 	for _, c := range v.list {
-		c.EventChannel() <- sm
+		c.EventChannel() <- (*sm)
 	}
 
 	return nil
