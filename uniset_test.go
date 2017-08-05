@@ -7,7 +7,7 @@ import (
 	"uniset"
 )
 
-// тестовый consumer
+// тестовая реализация интерфейса UConsumer
 type TestConsumer struct {
 	eventChannel chan uniset.SensorMessage
 	id           uniset.ObjectID
@@ -59,7 +59,7 @@ func (c *TestConsumer) read(t *testing.T, sid uniset.SensorID, timeout int, wg *
 	//}
 }
 
-func sendMessages(t *testing.T, ui *uniset.UInterface, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
+func sendMessages(t *testing.T, ui *uniset.UActivator, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
@@ -73,7 +73,7 @@ func sendMessages(t *testing.T, ui *uniset.UInterface, msg *uniset.SensorMessage
 
 func TestSubscribe(t *testing.T) {
 
-	ui := uniset.NewUInterface()
+	ui := uniset.GetActivator()
 
 	consumer := TestConsumer{make(chan uniset.SensorMessage, 10), 100}
 
@@ -111,7 +111,7 @@ func TestSubscribe(t *testing.T) {
 	}
 }
 
-func subscribe(ui *uniset.UInterface, clist *[]*TestConsumer, sid uniset.SensorID, wg *sync.WaitGroup) {
+func subscribe(ui *uniset.UActivator, clist *[]*TestConsumer, sid uniset.SensorID, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 	for _, c := range *clist {
@@ -121,7 +121,7 @@ func subscribe(ui *uniset.UInterface, clist *[]*TestConsumer, sid uniset.SensorI
 
 func TestMultithreadSubscribe(t *testing.T) {
 
-	ui := uniset.NewUInterface()
+	ui := uniset.GetActivator()
 
 	conslist := make([]*TestConsumer, 10, 10)
 
@@ -172,7 +172,7 @@ func TestMultithreadSubscribe(t *testing.T) {
 
 func TestUWorking(t *testing.T) {
 
-	ui := uniset.NewUInterface()
+	ui := uniset.GetActivator()
 
 	clist := make([]*TestConsumer, 3, 3)
 
@@ -184,18 +184,18 @@ func TestUWorking(t *testing.T) {
 
 	err := ui.Run()
 	if err != nil {
-		t.Errorf("UInterface: Run error: %s", err.Error())
+		t.Errorf("UActivator: Run error: %s", err.Error())
 	}
 
 	ui.Terminate()
 
 	if ui.IsActive(){
-		t.Error("UInterface: is active after terminate!")
+		t.Error("UActivator: is active after terminate!")
 	}
 
 	ui.Run()
 	if !ui.IsActive(){
-		t.Error("UInterface: NOT active after run!")
+		t.Error("UActivator: NOT active after run!")
 	}
 
 	var wg sync.WaitGroup
