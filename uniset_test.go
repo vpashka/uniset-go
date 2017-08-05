@@ -7,7 +7,39 @@ import (
 	"uniset"
 )
 
-func TestUMessage(t *testing.T) {
+// -----------------------------------------------------------------------------
+// тестовая реализация интерфейса UObject
+type TestObject struct {
+	id            uniset.ObjectID
+	ueventChannel chan uniset.UMessage
+}
+
+func (c *TestObject) ID() uniset.ObjectID {
+	return c.id
+}
+
+func (c *TestObject) UEvent() chan uniset.UMessage {
+	return c.ueventChannel
+}
+
+func makeUObjects(beginID uniset.ObjectID) []*TestObject {
+
+	conslist := make([]*TestObject, 10, 10)
+
+	var id uniset.ObjectID = beginID
+	for i := 0; i < len(conslist); i++ {
+		conslist[i] = &TestObject{id, make(chan uniset.UMessage, 10)}
+		id++
+	}
+
+	return conslist
+}
+
+// ----------------------------------------------------------------
+// Преобразование сообщений UMessage <--> SensorMessage
+// ----------------------------------------------------------------
+func TestUMessage2SensorMessage(t *testing.T) {
+
 	sm := uniset.SensorMessage{30, 10500, time.Now()}
 	u := uniset.UMessage{}
 	u.Push(sm)
@@ -34,25 +66,34 @@ func TestUMessage(t *testing.T) {
 
 }
 
-// тестовая реализация интерфейса UObject
-type TestConsumer struct {
-	id            uniset.ObjectID
-	ueventChannel chan uniset.UMessage
+// ----------------------------------------------------------------
+// Преобразование сообщений UMessage <--> TimerMessage
+// ----------------------------------------------------------------
+func TestUMessage2TimerMessage(t *testing.T) {
+
+	tm := uniset.TimerMessage{1}
+	u := uniset.UMessage{}
+	u.Push(tm)
+
+	_, ok := u.PopAsSensorMessage()
+
+	if ok {
+		t.Errorf("TM --> UM --> SM: ?!!")
+	}
+
+	tm2, ok := u.PopAsTimerMessage()
+
+	if tm2.Id != tm.Id {
+		t.Errorf("TM --> UM --> TM: Incorrect ID")
+	}
 }
 
-func (c *TestConsumer) ID() uniset.ObjectID {
-	return c.id
-}
-
-func (c *TestConsumer) UEvent() chan uniset.UMessage {
-	return c.ueventChannel
-}
-
-func (c *TestConsumer) read(t *testing.T, sid uniset.SensorID, timeout int, wg *sync.WaitGroup) int {
+// ----------------------------------------------------------------
+func (c *TestObject) read(t *testing.T, sid uniset.SensorID, timeout_msec int, wg *sync.WaitGroup) int {
 
 	defer wg.Done()
 
-	finish := time.After(time.Duration(timeout) * time.Millisecond)
+	timeout := time.After(time.Duration(timeout_msec) * time.Millisecond)
 	var num int
 
 	for {
@@ -70,60 +111,50 @@ func (c *TestConsumer) read(t *testing.T, sid uniset.SensorID, timeout int, wg *
 			} else {
 				num++
 			}
-		case <-finish:
-			//t.Log("timed out")
+		case <-timeout:
+			//t.Logf("timed out (%d msec)", timeout_msec)
 			return num
-
-		default:
-			time.Sleep(200 * time.Millisecond)
-			continue
 		}
 	}
 
 	return num
-
-	//var num int
-	//for i := 0; i < count; i++ {
-	//	msg := <-c.eventChannel
-	//	if msg.mtype != sid {
-	//		t.Errorf("ReadMessage: sid=%d != %d", msg.mtype, sid)
-	//	}
-	//	num++
-	//	//t.Log(msg.String())
-	//}
 }
 
-func sendMessages(t *testing.T, ui *uniset.UActivator, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
+func sendMessages(t *testing.T, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
+	ui := uniset.GetActivator()
+
 	for i := 0; i < count; i++ {
-		_, err := ui.SendSensorMessage(msg)
-		if err != nil {
-			t.Error("SendMessages error: " + err.Error())
+		ok := ui.SetValue(msg.Id, msg.Value, 1)
+		if !ok {
+			t.Error("SendMessages FAILED")
 		}
 	}
 }
 
-func TestSubscribe(t *testing.T) {
+// ----------------------------------------------------------------
+// Тест заказа датчика (простой заказ)
+// ----------------------------------------------------------------
+func TestAskSensor(t *testing.T) {
 
 	ui := uniset.GetActivator()
 
-	consumer := TestConsumer{100, make(chan uniset.UMessage, 10)}
+	consumer := TestObject{100, make(chan uniset.UMessage, 10)}
 
-	ui.Subscribe(10, &consumer)
+	ui.AskSensor(10, &consumer)
 
 	if ui.Size() != 1 {
-		t.Errorf("Subscribe: size %d != %d", ui.Size(), 1)
+		t.Errorf("AskSensor: size %d != %d", ui.Size(), 1)
 	}
 
 	num := ui.NumberOfConsumers(10)
 	if num != 1 {
-		t.Errorf("Subscribe: NumberOfCunsumers=%d != %d", num, 1)
+		t.Errorf("AskSensor: NumberOfCunsumers=%d != %d", num, 1)
 	}
 
 	sm1 := uniset.SensorMessage{10, 10500, time.Now()}
-	sm2 := uniset.SensorMessage{11, 100500, time.Now()}
 
 	msgCount := 3
 	timeout := 800
@@ -131,12 +162,7 @@ func TestSubscribe(t *testing.T) {
 
 	wg.Add(2)
 
-	go sendMessages(t, ui, &sm1, msgCount, &wg)
-
-	_, err := ui.SendSensorMessage(&sm2)
-	if err == nil {
-		t.Error("SendSensorMessage found Unknown sensor?!" + err.Error())
-	}
+	go sendMessages(t, &sm1, msgCount, &wg)
 
 	rnum := consumer.read(t, sm1.Id, timeout, &wg)
 
@@ -145,25 +171,23 @@ func TestSubscribe(t *testing.T) {
 	}
 }
 
-func subscribe(ui *uniset.UActivator, clist *[]*TestConsumer, sid uniset.SensorID, wg *sync.WaitGroup) {
+func askSensor(clist *[]*TestObject, sid uniset.SensorID, wg *sync.WaitGroup) {
 
 	defer wg.Done()
+	ui := uniset.GetActivator()
 	for _, c := range *clist {
-		ui.Subscribe(sid, c)
+		ui.AskSensor(sid, c)
 	}
 }
 
-func TestMultithreadSubscribe(t *testing.T) {
+// ----------------------------------------------------------------
+// Тест заказа датчика (многопоточный заказ)
+// ----------------------------------------------------------------
+func TestMultithreadAskSensors(t *testing.T) {
 
 	ui := uniset.GetActivator()
 
-	conslist := make([]*TestConsumer, 10, 10)
-
-	var id uniset.ObjectID = 100
-	for i := 0; i < len(conslist); i++ {
-		conslist[i] = &TestConsumer{id, make(chan uniset.UMessage, 10)}
-		id++
-	}
+	conslist := makeUObjects(100)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -171,13 +195,13 @@ func TestMultithreadSubscribe(t *testing.T) {
 	l1 := conslist[0:5]
 	l2 := conslist[5:len(conslist)]
 
-	go subscribe(ui, &l1, 30, &wg)
-	go subscribe(ui, &l2, 30, &wg)
+	go askSensor(&l1, 30, &wg)
+	go askSensor(&l2, 30, &wg)
 
 	wg.Wait()
 
 	if ui.NumberOfConsumers(30) != len(conslist) {
-		t.Errorf("Subscribe: size %d != %d", ui.NumberOfConsumers(30), len(conslist))
+		t.Errorf("AskSensor: size %d != %d", ui.NumberOfConsumers(30), len(conslist))
 	}
 
 	sm := uniset.SensorMessage{30, 10500, time.Now()}
@@ -188,33 +212,30 @@ func TestMultithreadSubscribe(t *testing.T) {
 	var wg2 sync.WaitGroup
 	wg2.Add(12)
 
-	go sendMessages(t, ui, &sm, msgCount, &wg2)
-	go sendMessages(t, ui, &sm, msgCount, &wg2)
+	go sendMessages(t, &sm, msgCount, &wg2)
+	go sendMessages(t, &sm, msgCount, &wg2)
 
 	rnum := (*conslist[0]).read(t, 30, timeout, &wg2)
 	if rnum < msgCount {
-		t.Errorf("Count of received messages %d < %d", rnum, msgCount)
+		t.Errorf("TObject1: Count of received messages %d < %d", rnum, msgCount)
 	}
 
 	rnum = (*conslist[1]).read(t, 30, timeout, &wg2)
 	if rnum < msgCount {
-		t.Errorf("Count of received messages %d < %d", rnum, msgCount)
+		t.Errorf("TObject2: Count of received messages %d < %d", rnum, msgCount)
 	}
 
 	wg2.Done()
 }
 
+// ----------------------------------------------------------------
+// Штатная работы UActivator-а
+// ----------------------------------------------------------------
 func TestUWorking(t *testing.T) {
 
 	ui := uniset.GetActivator()
 
-	clist := make([]*TestConsumer, 3, 3)
-
-	var id uniset.ObjectID = 100
-	for i := 0; i < len(clist); i++ {
-		clist[i] = &TestConsumer{id, make(chan uniset.UMessage, 10)}
-		id++
-	}
+	clist := makeUObjects(100)
 
 	err := ui.Run()
 	if err != nil {
@@ -234,15 +255,20 @@ func TestUWorking(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	var sid uniset.SensorID = 10
+
+	var sid uniset.SensorID = 21
 	msgCount := 3
 
-	err = ui.Subscribe(sid, clist[0])
+	err = ui.AskSensor(sid, clist[0])
 	if err != nil {
-		t.Errorf("Subscribe error: %s", err)
+		t.Errorf("AskSensor error: %s", err)
 	}
 
-	rnum := (*clist[0]).read(t, sid, 6000, &wg)
+	for i:=0; i<msgCount; i++ {
+		ui.SetValue(sid, 10+int32(i), 2)
+	}
+
+	rnum := (*clist[0]).read(t, sid, 2000, &wg)
 	if rnum < msgCount {
 		t.Errorf("Count of received messages %d < %d", rnum, msgCount)
 	}

@@ -5,23 +5,22 @@ package uniset
 
 import (
 	"container/list"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 )
 
-type consumerList struct {
+type consumersList struct {
 	list list.List
 	mut  sync.RWMutex
 }
 
-func newConsumerList() *consumerList {
-	lst := consumerList{}
+func newConsumersList() *consumersList {
+	lst := consumersList{}
 	return &lst
 }
 
-func (l *consumerList) Add(cons UObject) {
+func (l *consumersList) add(cons UObject) {
 
 	l.mut.Lock()
 	defer l.mut.Unlock()
@@ -36,13 +35,13 @@ func (l *consumerList) Add(cons UObject) {
 }
 
 type askMap struct {
-	cmap map[SensorID]*consumerList
+	cmap map[SensorID]*consumersList
 	mut  sync.RWMutex
 }
 
 func newAskMap() *askMap {
 	m := askMap{}
-	m.cmap = make(map[SensorID]*consumerList)
+	m.cmap = make(map[SensorID]*consumersList)
 	return &m
 }
 
@@ -58,23 +57,23 @@ func newUActivator() *UActivator {
 	ui := UActivator{}
 	ui.askmap = newAskMap()
 	ui.active = false
-	//ui.term.Add(1)
+	//ui.term.add(1)
 	return &ui
 }
-
+// ----------------------------------------------------------------------------------
 func (ui *UActivator) IsActive() bool {
 	ui.actmutex.RLock()
 	defer ui.actmutex.RUnlock()
 	return ui.active
 }
-
+// ----------------------------------------------------------------------------------
 func (ui *UActivator) setActive(set bool) {
 	ui.actmutex.Lock()
 	defer ui.actmutex.Unlock()
 	ui.active = set
 }
 
-
+// ----------------------------------------------------------------------------------
 var instance *UActivator
 var once sync.Once
 
@@ -88,13 +87,13 @@ func GetActivator() *UActivator {
 	return instance
 }
 
-
+// ----------------------------------------------------------------------------------
 func (ui *UActivator) Size() int {
 	ui.askmap.mut.RLock()
 	defer ui.askmap.mut.RUnlock()
 	return len(ui.askmap.cmap)
 }
-
+// ----------------------------------------------------------------------------------
 func (ui *UActivator) NumberOfConsumers(sid SensorID) int {
 
 	ui.askmap.mut.RLock()
@@ -107,29 +106,29 @@ func (ui *UActivator) NumberOfConsumers(sid SensorID) int {
 
 	return 0
 }
-
-func (ui *UActivator) Subscribe(sid SensorID, cons UObject) (err error) {
+// ----------------------------------------------------------------------------------
+func (ui *UActivator) AskSensor(sid SensorID, cons UObject) (err error) {
 
 	ui.askmap.mut.Lock()
 	defer ui.askmap.mut.Unlock()
 
 	lst, found := ui.askmap.cmap[sid]
 	if found {
-		lst.Add(cons)
+		lst.add(cons)
 		return nil
 	}
 
-	lst = newConsumerList()
+	lst = newConsumersList()
 
 	if lst == nil {
 		return err
 	}
 
-	lst.Add(cons)
+	lst.add(cons)
 	ui.askmap.cmap[sid] = lst
 	return nil
 }
-
+// ----------------------------------------------------------------------------------
 func (ui *UActivator) Terminate() error {
 
 	if ui.IsActive() {
@@ -139,7 +138,8 @@ func (ui *UActivator) Terminate() error {
 
 	return nil
 }
-
+// ----------------------------------------------------------------------------------
+// запустить активатор в работу..
 func (ui *UActivator) Run() error {
 
 	if ui.IsActive() {
@@ -150,45 +150,50 @@ func (ui *UActivator) Run() error {
 	ui.setActive(true)
 	go func() {
 		defer ui.term.Done()
-		sm1 := SensorMessage{10, 10500, time.Now()}
-		sm2 := SensorMessage{11, 10501, time.Now()}
 
 		for ui.IsActive() {
 			// пока-что деятельность имитируем
 			time.Sleep(1 * time.Second)
-			ui.SendSensorMessage(&sm1)
-			time.Sleep(1 * time.Second)
-			ui.SendSensorMessage(&sm2)
 		}
 	}()
 
 	return nil
 }
 
-func (ui *UActivator) SendSensorMessage(sm *SensorMessage) (int, error) {
+// ----------------------------------------------------------------------------------
+// сохранить значение
+func (ui *UActivator) SetValue( sid SensorID, value int32, supplier ObjectID ) bool {
 
+	sm := SensorMessage{sid, value, time.Now()}
 	ui.askmap.mut.RLock()
 	defer ui.askmap.mut.RUnlock()
 
-	v, found := ui.askmap.cmap[sm.Id]
+	lst, found := ui.askmap.cmap[sm.Id]
 	if !found {
-		err := fmt.Sprintf("Not found: sensorID '%d'", sm.Id)
-		return 0, errors.New(err)
+		return false
 	}
 
 	u := UMessage{}
-	u.Push(sm)
+	u.Push(&sm)
+	ui.sendMessage(&u,lst)
+	return true
+}
 
-	num := 0
-	for e := v.list.Front(); e != nil; e = e.Next() {
+// ----------------------------------------------------------------------------------
+// рассылка сообщений объектам
+func (ui *UActivator) sendMessage( msg *UMessage, l *consumersList) {
+
+	l.mut.RLock()
+	defer l.mut.RUnlock()
+
+	for e := l.list.Front(); e != nil; e = e.Next() {
 		c := e.Value.(UObject)
 
 		// делаем по две попытки на подписчика..
 		for i:=0; i<2; i++ {
 			//finish := time.After(time.Duration(20) * time.Millisecond)
 			select {
-			case c.UEvent() <- u:
-				num++
+			case c.UEvent() <- *msg:
 
 			//case <-finish:
 			//	if i == 2 {
@@ -197,7 +202,7 @@ func (ui *UActivator) SendSensorMessage(sm *SensorMessage) (int, error) {
 			//	continue
 
 			default:
-				if i == 2 {
+				if i == 1 {
 					break
 				}
 				//time.Sleep(10 * time.Millisecond)
@@ -205,11 +210,10 @@ func (ui *UActivator) SendSensorMessage(sm *SensorMessage) (int, error) {
 			}
 		}
 	}
-
-	return num, nil
 }
 
-func (l *consumerList) String() string {
+// ----------------------------------------------------------------------------------
+func (l *consumersList) String() string {
 	l.mut.RLock()
 	defer l.mut.RUnlock()
 
