@@ -3,17 +3,13 @@ package uniset
 
 import (
 	"time"
+	"fmt"
 )
 
 type SensorID int32
 type ObjectID int32
 
 const DefaultObjectID int32 = -1
-
-const (
-	SensorMessageType = iota
-	TimerMessageType
-)
 
 type SensorMessage struct {
 	Id        SensorID
@@ -27,13 +23,16 @@ type TimerMessage struct {
 }
 
 type UMessage struct {
-	mtype uint32
-	msg   interface{}
+	msg interface{}
 	//Timestamp time.Time
 }
 
-func (u *UMessage) Push(id uint32, m interface{}) {
-	u.mtype = id
+type UObject interface {
+	UEvent() chan UMessage
+	ID() ObjectID
+}
+
+func (u *UMessage) Push(m interface{}) {
 	u.msg = m
 }
 
@@ -41,30 +40,37 @@ func (u *UMessage) Pop() interface{} {
 	return u.msg
 }
 
-func (u *UMessage) PopSensorMessage() (SensorMessage, bool) {
-	//if u.mtype == SensorMessageType {
-	//	return u.msg.(SensorMessage), true
-	//}
+func (u *UMessage) PopAsSensorMessage() (*SensorMessage, bool) {
 
 	switch u.msg.(type) {
 
 	case SensorMessage:
-		return u.msg.(SensorMessage), true
+		sm := u.msg.(SensorMessage)
+		return &sm, true
+
+	case *SensorMessage:
+		sm := u.msg.(*SensorMessage)
+		return sm, true
 	}
 
-	return SensorMessage{}, false
+	return nil, false
 }
 
-func (u *UMessage) PopTimerMessage() (TimerMessage, bool) {
-	if u.mtype == TimerMessageType {
-		return u.msg.(TimerMessage), true
+func (u *UMessage) PopAsTimerMessage() (*TimerMessage, bool) {
+	switch u.msg.(type) {
+
+	case TimerMessage:
+		tm := u.msg.(TimerMessage)
+		return &tm, true
+
+	case *TimerMessage:
+		tm := u.msg.(*TimerMessage)
+		return tm, true
 	}
 
-	return TimerMessage{}, false
+	return nil, false
 }
 
-type UObject interface {
-	EventChannel() chan SensorMessage
-	UEvent() chan UMessage
-	ID() ObjectID
+func (m *SensorMessage) String() string {
+	return fmt.Sprintf("id: %d value: %d", m.Id, m.Value)
 }

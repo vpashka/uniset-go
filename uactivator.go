@@ -176,19 +176,33 @@ func (ui *UActivator) SendSensorMessage(sm *SensorMessage) (int, error) {
 		return 0, errors.New(err)
 	}
 
+	u := UMessage{}
+	u.Push(sm)
+
 	num := 0
 	for e := v.list.Front(); e != nil; e = e.Next() {
 		c := e.Value.(UObject)
-		finish := time.After(time.Duration(200) * time.Millisecond)
-		select {
-		case c.EventChannel() <- *sm:
-			num++
 
-		case <-finish:
-			continue
+		// делаем по две попытки на подписчика..
+		for i:=0; i<2; i++ {
+			//finish := time.After(time.Duration(20) * time.Millisecond)
+			select {
+			case c.UEvent() <- u:
+				num++
 
-			//default:
+			//case <-finish:
+			//	if i == 2 {
+			//		break
+			//	}
 			//	continue
+
+			default:
+				if i == 2 {
+					break
+				}
+				//time.Sleep(10 * time.Millisecond)
+				continue
+			}
 		}
 	}
 
@@ -207,8 +221,4 @@ func (l *consumerList) String() string {
 	}
 	str += " ]"
 	return str
-}
-
-func (m *SensorMessage) String() string {
-	return fmt.Sprintf("id: %d value: %d", m.Id, m.Value)
 }

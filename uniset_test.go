@@ -7,15 +7,37 @@ import (
 	"uniset"
 )
 
-// тестовая реализация интерфейса UObject
-type TestConsumer struct {
-	eventChannel  chan uniset.SensorMessage
-	id            uniset.ObjectID
-	ueventChannel chan uniset.UMessage
+func TestUMessage(t *testing.T) {
+	sm := uniset.SensorMessage{30, 10500, time.Now()}
+	u := uniset.UMessage{}
+	u.Push(sm)
+
+	_, ok := u.PopAsTimerMessage()
+
+	if ok {
+		t.Errorf("SM --> UM --> TM: ?!!")
+	}
+
+	sm2, ok := u.PopAsSensorMessage()
+
+	if sm2.Id != sm.Id {
+		t.Errorf("SM --> UM --> SM: Incorrect ID")
+	}
+
+	if sm2.Value != sm.Value {
+		t.Errorf("SM --> UM --> SM: Incorrect Value")
+	}
+
+	if sm2.Timestamp != sm.Timestamp {
+		t.Errorf("SM --> UM --> SM: Incorrect Timestamp")
+	}
+
 }
 
-func (c *TestConsumer) EventChannel() chan uniset.SensorMessage {
-	return c.eventChannel
+// тестовая реализация интерфейса UObject
+type TestConsumer struct {
+	id            uniset.ObjectID
+	ueventChannel chan uniset.UMessage
 }
 
 func (c *TestConsumer) ID() uniset.ObjectID {
@@ -35,9 +57,16 @@ func (c *TestConsumer) read(t *testing.T, sid uniset.SensorID, timeout int, wg *
 
 	for {
 		select {
-		case msg := <-c.eventChannel:
-			if msg.Id != sid {
-				t.Errorf("ReadMessage: sid=%d != %d", msg.Id, sid)
+		case msg := <-c.ueventChannel:
+
+			sm, ok := msg.PopAsSensorMessage()
+			if !ok {
+				t.Errorf("ReadMessage: unknown message")
+				continue
+			}
+
+			if sm.Id != sid {
+				t.Errorf("ReadMessage: Unknown sensorID=%d != %d", sm.Id, sid)
 			} else {
 				num++
 			}
@@ -80,7 +109,7 @@ func TestSubscribe(t *testing.T) {
 
 	ui := uniset.GetActivator()
 
-	consumer := TestConsumer{make(chan uniset.SensorMessage, 10), 100, make(chan uniset.UMessage,10)}
+	consumer := TestConsumer{100, make(chan uniset.UMessage, 10)}
 
 	ui.Subscribe(10, &consumer)
 
@@ -132,7 +161,7 @@ func TestMultithreadSubscribe(t *testing.T) {
 
 	var id uniset.ObjectID = 100
 	for i := 0; i < len(conslist); i++ {
-		conslist[i] = &TestConsumer{make(chan uniset.SensorMessage, 10), id, make(chan uniset.UMessage, 10)}
+		conslist[i] = &TestConsumer{id, make(chan uniset.UMessage, 10)}
 		id++
 	}
 
@@ -183,7 +212,7 @@ func TestUWorking(t *testing.T) {
 
 	var id uniset.ObjectID = 100
 	for i := 0; i < len(clist); i++ {
-		clist[i] = &TestConsumer{make(chan uniset.SensorMessage, 10), id, make(chan uniset.UMessage, 10)}
+		clist[i] = &TestConsumer{id, make(chan uniset.UMessage, 10)}
 		id++
 	}
 
@@ -219,32 +248,4 @@ func TestUWorking(t *testing.T) {
 	}
 
 	//wg.Wait()
-}
-
-func TestUMessage(t *testing.T) {
-	sm := uniset.SensorMessage{30, 10500, time.Now()}
-	u := uniset.UMessage{}
-	u.Push(uniset.SensorMessageType, sm)
-
-
-	_, ok := u.PopTimerMessage()
-
-	if ok {
-		t.Errorf("SM --> UM --> TM: ?!!")
-	}
-
-	sm2, ok := u.PopSensorMessage()
-
-	if sm2.Id != sm.Id {
-		t.Errorf("SM --> UM --> SM: Incorrect ID")
-	}
-
-	if sm2.Value != sm.Value {
-		t.Errorf("SM --> UM --> SM: Incorrect Value")
-	}
-
-	if sm2.Timestamp != sm.Timestamp {
-		t.Errorf("SM --> UM --> SM: Incorrect Timestamp")
-	}
-
 }
