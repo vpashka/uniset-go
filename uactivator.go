@@ -11,11 +11,6 @@ import (
 	"time"
 )
 
-type UConsumer interface {
-	EventChannel() chan SensorMessage
-	ID() ObjectID
-}
-
 type consumerList struct {
 	list list.List
 	mut  sync.RWMutex
@@ -26,12 +21,12 @@ func newConsumerList() *consumerList {
 	return &lst
 }
 
-func (l *consumerList) Add(cons UConsumer) {
+func (l *consumerList) Add(cons UObject) {
 
 	l.mut.Lock()
 	defer l.mut.Unlock()
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UConsumer)
+		c := e.Value.(UObject)
 		if c.ID() == cons.ID() {
 			return
 		}
@@ -113,7 +108,7 @@ func (ui *UActivator) NumberOfConsumers(sid SensorID) int {
 	return 0
 }
 
-func (ui *UActivator) Subscribe(sid SensorID, cons UConsumer) (err error) {
+func (ui *UActivator) Subscribe(sid SensorID, cons UObject) (err error) {
 
 	ui.askmap.mut.Lock()
 	defer ui.askmap.mut.Unlock()
@@ -183,7 +178,7 @@ func (ui *UActivator) SendSensorMessage(sm *SensorMessage) (int, error) {
 
 	num := 0
 	for e := v.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UConsumer)
+		c := e.Value.(UObject)
 		finish := time.After(time.Duration(200) * time.Millisecond)
 		select {
 		case c.EventChannel() <- *sm:
@@ -207,7 +202,7 @@ func (l *consumerList) String() string {
 	var str string
 	str = "["
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UConsumer)
+		c := e.Value.(UObject)
 		str = fmt.Sprintf("%s %d", str, c.ID())
 	}
 	str += " ]"

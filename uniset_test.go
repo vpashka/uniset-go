@@ -7,10 +7,11 @@ import (
 	"uniset"
 )
 
-// тестовая реализация интерфейса UConsumer
+// тестовая реализация интерфейса UObject
 type TestConsumer struct {
-	eventChannel chan uniset.SensorMessage
-	id           uniset.ObjectID
+	eventChannel  chan uniset.SensorMessage
+	id            uniset.ObjectID
+	ueventChannel chan uniset.UMessage
 }
 
 func (c *TestConsumer) EventChannel() chan uniset.SensorMessage {
@@ -21,11 +22,15 @@ func (c *TestConsumer) ID() uniset.ObjectID {
 	return c.id
 }
 
+func (c *TestConsumer) UEvent() chan uniset.UMessage {
+	return c.ueventChannel
+}
+
 func (c *TestConsumer) read(t *testing.T, sid uniset.SensorID, timeout int, wg *sync.WaitGroup) int {
 
 	defer wg.Done()
 
-	finish := time.After(time.Duration(timeout)*time.Millisecond)
+	finish := time.After(time.Duration(timeout) * time.Millisecond)
 	var num int
 
 	for {
@@ -51,8 +56,8 @@ func (c *TestConsumer) read(t *testing.T, sid uniset.SensorID, timeout int, wg *
 	//var num int
 	//for i := 0; i < count; i++ {
 	//	msg := <-c.eventChannel
-	//	if msg.Id != sid {
-	//		t.Errorf("ReadMessage: sid=%d != %d", msg.Id, sid)
+	//	if msg.mtype != sid {
+	//		t.Errorf("ReadMessage: sid=%d != %d", msg.mtype, sid)
 	//	}
 	//	num++
 	//	//t.Log(msg.String())
@@ -64,7 +69,7 @@ func sendMessages(t *testing.T, ui *uniset.UActivator, msg *uniset.SensorMessage
 	defer wg.Done()
 
 	for i := 0; i < count; i++ {
-		_,err := ui.SendSensorMessage(msg)
+		_, err := ui.SendSensorMessage(msg)
 		if err != nil {
 			t.Error("SendMessages error: " + err.Error())
 		}
@@ -75,7 +80,7 @@ func TestSubscribe(t *testing.T) {
 
 	ui := uniset.GetActivator()
 
-	consumer := TestConsumer{make(chan uniset.SensorMessage, 10), 100}
+	consumer := TestConsumer{make(chan uniset.SensorMessage, 10), 100, make(chan uniset.UMessage,10)}
 
 	ui.Subscribe(10, &consumer)
 
@@ -127,7 +132,7 @@ func TestMultithreadSubscribe(t *testing.T) {
 
 	var id uniset.ObjectID = 100
 	for i := 0; i < len(conslist); i++ {
-		conslist[i] = &TestConsumer{make(chan uniset.SensorMessage, 10), id}
+		conslist[i] = &TestConsumer{make(chan uniset.SensorMessage, 10), id, make(chan uniset.UMessage, 10)}
 		id++
 	}
 
@@ -178,7 +183,7 @@ func TestUWorking(t *testing.T) {
 
 	var id uniset.ObjectID = 100
 	for i := 0; i < len(clist); i++ {
-		clist[i] = &TestConsumer{make(chan uniset.SensorMessage, 10), id}
+		clist[i] = &TestConsumer{make(chan uniset.SensorMessage, 10), id, make(chan uniset.UMessage, 10)}
 		id++
 	}
 
@@ -189,12 +194,12 @@ func TestUWorking(t *testing.T) {
 
 	ui.Terminate()
 
-	if ui.IsActive(){
+	if ui.IsActive() {
 		t.Error("UActivator: is active after terminate!")
 	}
 
 	ui.Run()
-	if !ui.IsActive(){
+	if !ui.IsActive() {
 		t.Error("UActivator: NOT active after run!")
 	}
 
@@ -203,7 +208,7 @@ func TestUWorking(t *testing.T) {
 	var sid uniset.SensorID = 10
 	msgCount := 3
 
-	err = ui.Subscribe(sid,clist[0])
+	err = ui.Subscribe(sid, clist[0])
 	if err != nil {
 		t.Errorf("Subscribe error: %s", err)
 	}
@@ -214,4 +219,32 @@ func TestUWorking(t *testing.T) {
 	}
 
 	//wg.Wait()
+}
+
+func TestUMessage(t *testing.T) {
+	sm := uniset.SensorMessage{30, 10500, time.Now()}
+	u := uniset.UMessage{}
+	u.Push(uniset.SensorMessageType, sm)
+
+
+	_, ok := u.PopTimerMessage()
+
+	if ok {
+		t.Errorf("SM --> UM --> TM: ?!!")
+	}
+
+	sm2, ok := u.PopSensorMessage()
+
+	if sm2.Id != sm.Id {
+		t.Errorf("SM --> UM --> SM: Incorrect ID")
+	}
+
+	if sm2.Value != sm.Value {
+		t.Errorf("SM --> UM --> SM: Incorrect Value")
+	}
+
+	if sm2.Timestamp != sm.Timestamp {
+		t.Errorf("SM --> UM --> SM: Incorrect Timestamp")
+	}
+
 }
