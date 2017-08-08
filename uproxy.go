@@ -1,13 +1,15 @@
-// Activator
-// Главный объект в приложении реализующий взаимодействие с c++-ой частью,
+// UProxy.
+// Объект в реализующий взаимодействие с c++-ой частью,
 // и рассылающий уведомления подписавшимся
 package uniset
 
 import (
 	"container/list"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
+	"uniset_internal_api"
 )
 
 type consumersList struct {
@@ -45,56 +47,61 @@ func newAskMap() *askMap {
 	return &m
 }
 
-type UActivator struct {
+// ----------------------------------------------------------------------------------
+// Объект через который идёт всё взаимодействие с uniset-системой
+// При своём запуске Run() создаётся c++-ный объект который реально работает
+// с uniset-системой, а UProxy проксирует запросы к нему и обработку сообщений
+// преобразуя их в события в go-каналах.
+type UProxy struct {
 	// map: sensorID => consumer list
-	askmap   *askMap
-	active   bool
-	actmutex sync.RWMutex
-	term     sync.WaitGroup
+	askmap      *askMap
+	active      bool
+	actmutex    sync.RWMutex
+	term        sync.WaitGroup
+	id          string
+	confile     string
+	uniset_port int
 }
 
-func newUActivator() *UActivator {
-	ui := UActivator{}
+// ----------------------------------------------------------------------------------
+// Создание UProxy
+// в качестве аргумента передаётся идентификатор
+// используемый для создания c++-объекта
+func NewUProxy(id string, confile string, uniset_port int) *UProxy {
+	ui := UProxy{}
 	ui.askmap = newAskMap()
 	ui.active = false
+	ui.id = id
+	ui.confile = confile
+	ui.uniset_port = uniset_port
 	//ui.term.add(1)
 	return &ui
 }
+
 // ----------------------------------------------------------------------------------
-func (ui *UActivator) IsActive() bool {
+// Узнать активен ли UProxy
+func (ui *UProxy) IsActive() bool {
 	ui.actmutex.RLock()
 	defer ui.actmutex.RUnlock()
 	return ui.active
 }
+
 // ----------------------------------------------------------------------------------
-func (ui *UActivator) setActive(set bool) {
+func (ui *UProxy) setActive(set bool) {
 	ui.actmutex.Lock()
 	defer ui.actmutex.Unlock()
 	ui.active = set
 }
 
 // ----------------------------------------------------------------------------------
-var instance *UActivator
-var once sync.Once
-
-func GetActivator() *UActivator {
-	once.Do(func() {
-		instance = newUActivator()
-		if instance == nil {
-			panic("UActivator::GetInstance error..")
-		}
-	})
-	return instance
-}
-
-// ----------------------------------------------------------------------------------
-func (ui *UActivator) Size() int {
+func (ui *UProxy) Size() int {
 	ui.askmap.mut.RLock()
 	defer ui.askmap.mut.RUnlock()
 	return len(ui.askmap.cmap)
 }
+
 // ----------------------------------------------------------------------------------
-func (ui *UActivator) NumberOfConsumers(sid SensorID) int {
+func (ui *UProxy) NumberOfConsumers(sid SensorID) int {
 
 	ui.askmap.mut.RLock()
 	defer ui.askmap.mut.RUnlock()
@@ -106,8 +113,9 @@ func (ui *UActivator) NumberOfConsumers(sid SensorID) int {
 
 	return 0
 }
+
 // ----------------------------------------------------------------------------------
-func (ui *UActivator) AskSensor(sid SensorID, cons UObject) (err error) {
+func (ui *UProxy) AskSensor(sid SensorID, cons UObject) (err error) {
 
 	ui.askmap.mut.Lock()
 	defer ui.askmap.mut.Unlock()
@@ -128,8 +136,10 @@ func (ui *UActivator) AskSensor(sid SensorID, cons UObject) (err error) {
 	ui.askmap.cmap[sid] = lst
 	return nil
 }
+
 // ----------------------------------------------------------------------------------
-func (ui *UActivator) Terminate() error {
+// Завершитьь работу UProxy
+func (ui *UProxy) Terminate() error {
 
 	if ui.IsActive() {
 		ui.setActive(false)
@@ -138,12 +148,40 @@ func (ui *UActivator) Terminate() error {
 
 	return nil
 }
+
 // ----------------------------------------------------------------------------------
-// запустить активатор в работу..
-func (ui *UActivator) Run() error {
+// инициализация
+func (ui *UProxy) Uniset_init() error {
+
+	//confile := flag.String("confile", "configure.xml", "uniset confile. Default: configure.xml")
+	//uniset_port := flag.String("uniset-port", "", "uniset port")
+	//flag.Parse()
+
+	params := uniset_internal_api.ParamsInst()
+	params.Add_str("--confile")
+	params.Add_str(ui.confile)
+
+	if ui.uniset_port > 0 {
+		uport := strconv.Itoa(ui.uniset_port)
+		params.Add_str("--uniset-port")
+		params.Add_str(uport)
+	}
+
+	uniset_internal_api.Uniset_init_params(params, ui.confile)
+	return nil
+}
+
+// ----------------------------------------------------------------------------------
+// запустить UProxy в работу
+func (ui *UProxy) Run() error {
 
 	if ui.IsActive() {
 		return nil
+	}
+
+	err := ui.Uniset_init()
+	if err != nil {
+		return err
 	}
 
 	ui.term.Add(1)
@@ -162,7 +200,7 @@ func (ui *UActivator) Run() error {
 
 // ----------------------------------------------------------------------------------
 // сохранить значение
-func (ui *UActivator) SetValue( sid SensorID, value int32, supplier ObjectID ) bool {
+func (ui *UProxy) SetValue(sid SensorID, value int32, supplier ObjectID) bool {
 
 	sm := SensorMessage{sid, value, time.Now()}
 	ui.askmap.mut.RLock()
@@ -175,13 +213,13 @@ func (ui *UActivator) SetValue( sid SensorID, value int32, supplier ObjectID ) b
 
 	u := UMessage{}
 	u.Push(&sm)
-	ui.sendMessage(&u,lst)
+	ui.sendMessage(&u, lst)
 	return true
 }
 
 // ----------------------------------------------------------------------------------
 // рассылка сообщений объектам
-func (ui *UActivator) sendMessage( msg *UMessage, l *consumersList) {
+func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
 
 	l.mut.RLock()
 	defer l.mut.RUnlock()
@@ -190,7 +228,7 @@ func (ui *UActivator) sendMessage( msg *UMessage, l *consumersList) {
 		c := e.Value.(UObject)
 
 		// делаем по две попытки на подписчика..
-		for i:=0; i<2; i++ {
+		for i := 0; i < 2; i++ {
 			//finish := time.After(time.Duration(20) * time.Millisecond)
 			select {
 			case c.UEvent() <- *msg:

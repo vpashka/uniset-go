@@ -2,8 +2,8 @@
 package uniset
 
 import (
-	"time"
 	"fmt"
+	"time"
 )
 
 type SensorID int32
@@ -27,6 +27,8 @@ type UMessage struct {
 	//Timestamp time.Time
 }
 
+// Интерфейс который должны реализовать объекты
+// желающие подписаться на uniset-события
 type UObject interface {
 	UEvent() chan UMessage
 	ID() ObjectID

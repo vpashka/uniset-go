@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 	"uniset"
+	"uniset_internal_api"
 )
 
 // -----------------------------------------------------------------------------
@@ -120,11 +121,9 @@ func (c *TestObject) read(t *testing.T, sid uniset.SensorID, timeout_msec int, w
 	return num
 }
 
-func sendMessages(t *testing.T, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
+func sendMessages(ui *uniset.UProxy, t *testing.T, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
 
 	defer wg.Done()
-
-	ui := uniset.GetActivator()
 
 	for i := 0; i < count; i++ {
 		ok := ui.SetValue(msg.Id, msg.Value, 1)
@@ -139,7 +138,7 @@ func sendMessages(t *testing.T, msg *uniset.SensorMessage, count int, wg *sync.W
 // ----------------------------------------------------------------
 func TestAskSensor(t *testing.T) {
 
-	ui := uniset.GetActivator()
+	ui := uniset.NewUProxy("UProxy1", "configrue.xml", 0)
 
 	consumer := TestObject{100, make(chan uniset.UMessage, 10)}
 
@@ -162,7 +161,7 @@ func TestAskSensor(t *testing.T) {
 
 	wg.Add(2)
 
-	go sendMessages(t, &sm1, msgCount, &wg)
+	go sendMessages(ui, t, &sm1, msgCount, &wg)
 
 	rnum := consumer.read(t, sm1.Id, timeout, &wg)
 
@@ -171,10 +170,9 @@ func TestAskSensor(t *testing.T) {
 	}
 }
 
-func askSensor(clist *[]*TestObject, sid uniset.SensorID, wg *sync.WaitGroup) {
-
+func askSensor(ui *uniset.UProxy, clist *[]*TestObject, sid uniset.SensorID, wg *sync.WaitGroup) {
 	defer wg.Done()
-	ui := uniset.GetActivator()
+
 	for _, c := range *clist {
 		ui.AskSensor(sid, c)
 	}
@@ -185,7 +183,7 @@ func askSensor(clist *[]*TestObject, sid uniset.SensorID, wg *sync.WaitGroup) {
 // ----------------------------------------------------------------
 func TestMultithreadAskSensors(t *testing.T) {
 
-	ui := uniset.GetActivator()
+	ui := uniset.NewUProxy("UProxy1", "configure.xml", 0)
 
 	conslist := makeUObjects(100)
 
@@ -195,13 +193,13 @@ func TestMultithreadAskSensors(t *testing.T) {
 	l1 := conslist[0:5]
 	l2 := conslist[5:len(conslist)]
 
-	go askSensor(&l1, 30, &wg)
-	go askSensor(&l2, 30, &wg)
+	go askSensor(ui, &l1, 30, &wg)
+	go askSensor(ui, &l2, 30, &wg)
 
 	wg.Wait()
 
 	if ui.NumberOfConsumers(30) != len(conslist) {
-		t.Errorf("AskSensor: size %d != %d", ui.NumberOfConsumers(30), len(conslist))
+		t.Errorf("NumberOfConsumers: size %d != %d", ui.NumberOfConsumers(30), len(conslist))
 	}
 
 	sm := uniset.SensorMessage{30, 10500, time.Now()}
@@ -212,8 +210,8 @@ func TestMultithreadAskSensors(t *testing.T) {
 	var wg2 sync.WaitGroup
 	wg2.Add(12)
 
-	go sendMessages(t, &sm, msgCount, &wg2)
-	go sendMessages(t, &sm, msgCount, &wg2)
+	go sendMessages(ui, t, &sm, msgCount, &wg2)
+	go sendMessages(ui, t, &sm, msgCount, &wg2)
 
 	rnum := (*conslist[0]).read(t, 30, timeout, &wg2)
 	if rnum < msgCount {
@@ -229,28 +227,44 @@ func TestMultithreadAskSensors(t *testing.T) {
 }
 
 // ----------------------------------------------------------------
-// Штатная работы UActivator-а
+// Тест заказа датчика (многопоточный заказ)
+// ----------------------------------------------------------------
+func TestUProxyInit(t *testing.T) {
+	ui := uniset.NewUProxy("UProxy1", "configure.xml", 0)
+
+	ui.Uniset_init()
+
+	oid := uniset_internal_api.GetObjectID("UProxy1")
+
+	if oid != 101 {
+		t.Errorf("Bad ObjectID for UProxy1'  %d!=%d", oid, 101)
+	}
+
+}
+
+// ----------------------------------------------------------------
+// Штатная работы UProxy-а
 // ----------------------------------------------------------------
 func TestUWorking(t *testing.T) {
 
-	ui := uniset.GetActivator()
+	ui := uniset.NewUProxy("UProxy1", "configure.xml", 0)
 
 	clist := makeUObjects(100)
 
 	err := ui.Run()
 	if err != nil {
-		t.Errorf("UActivator: Run error: %s", err.Error())
+		t.Errorf("UProxy: Run error: %s", err.Error())
 	}
 
 	ui.Terminate()
 
 	if ui.IsActive() {
-		t.Error("UActivator: is active after terminate!")
+		t.Error("UProxy: is active after terminate!")
 	}
 
 	ui.Run()
 	if !ui.IsActive() {
-		t.Error("UActivator: NOT active after run!")
+		t.Error("UProxy: NOT active after run!")
 	}
 
 	var wg sync.WaitGroup
@@ -264,7 +278,7 @@ func TestUWorking(t *testing.T) {
 		t.Errorf("AskSensor error: %s", err)
 	}
 
-	for i:=0; i<msgCount; i++ {
+	for i := 0; i < msgCount; i++ {
 		ui.SetValue(sid, 10+int32(i), 2)
 	}
 
