@@ -5,12 +5,11 @@ package uniset
 
 import (
 	"container/list"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
-	"time"
 	"uniset_internal_api"
-	"errors"
 )
 
 type consumersList struct {
@@ -23,12 +22,12 @@ func newConsumersList() *consumersList {
 	return &lst
 }
 
-func (l *consumersList) add(cons UObject) {
+func (l *consumersList) add(cons UObjecter) {
 
 	l.mut.Lock()
 	defer l.mut.Unlock()
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObject)
+		c := e.Value.(UObjecter)
 		if c.ID() == cons.ID() {
 			return
 		}
@@ -59,22 +58,24 @@ type UProxy struct {
 	active      bool
 	actmutex    sync.RWMutex
 	term        sync.WaitGroup
-	id          string
+	name          string
+	id		ObjectID
 	confile     string
 	uniset_port int
-	uproxy 		uniset_internal_api.UProxy
-	initOK	bool
+	uproxy      uniset_internal_api.UProxy
+	initOK      bool
 }
 
 // ----------------------------------------------------------------------------------
 // Создание UProxy
 // в качестве аргумента передаётся идентификатор
 // используемый для создания c++-объекта
-func NewUProxy(id string, confile string, uniset_port int) *UProxy {
+func NewUProxy(name string, confile string, uniset_port int) *UProxy {
 	ui := UProxy{}
 	ui.askmap = newAskMap()
 	ui.active = false
-	ui.id = id
+	ui.name = name
+	ui.id = ObjectID(DefaultObjectID)
 	ui.confile = confile
 	ui.uniset_port = uniset_port
 	ui.initOK = false
@@ -119,11 +120,23 @@ func (ui *UProxy) NumberOfConsumers(sid SensorID) int {
 }
 
 // ----------------------------------------------------------------------------------
-func (ui *UProxy) AskSensor(sid SensorID, cons UObject) (err error) {
+func (ui *UProxy) AskSensor(sid SensorID, cons UObjecter) (err error) {
+
+	if !ui.IsActive(){
+		return errors.New(fmt.Sprintf("%s (AskSensor): error: UProxy no activate..",ui.name))
+	}
 
 	ui.askmap.mut.Lock()
 	defer ui.askmap.mut.Unlock()
 
+	// сперва делаем реальный заказ
+	ret := ui.uproxy.SafeAskSensor(int64(sid))
+
+	if !ret {
+		return errors.New(fmt.Sprintf("%s (AskSensor): ask SensorID=%d failed..",ui.name,sid))
+	}
+
+	// потом уже вносим в список заказчиков
 	lst, found := ui.askmap.cmap[sid]
 	if found {
 		lst.add(cons)
@@ -138,6 +151,7 @@ func (ui *UProxy) AskSensor(sid SensorID, cons UObject) (err error) {
 
 	lst.add(cons)
 	ui.askmap.cmap[sid] = lst
+
 	return nil
 }
 
@@ -163,6 +177,9 @@ func (ui *UProxy) uniset_init() error {
 
 	//params.Add_str("--ulog-add-levels")
 	//params.Add_str("any")
+	//
+	//params.Add_str("--UProxy1-log-add-levels")
+	//params.Add_str("any")
 
 	if ui.uniset_port > 0 {
 		uport := strconv.Itoa(ui.uniset_port)
@@ -172,9 +189,9 @@ func (ui *UProxy) uniset_init() error {
 
 	uniset_internal_api.Uniset_init_params(params, ui.confile)
 
-	myid := uniset_internal_api.GetObjectID(ui.id)
-	if myid == DefaultObjectID {
-		return errors.New( fmt.Sprintf("UProxy::Uniset_init: Unknown ObjectID for %s",ui.id) )
+	ui.id = ObjectID(uniset_internal_api.GetObjectID(ui.name))
+	if ui.id == ObjectID(DefaultObjectID) {
+		return errors.New(fmt.Sprintf("UProxy::Uniset_init: Unknown ObjectID for %s", ui.name))
 	}
 
 	return nil
@@ -188,49 +205,37 @@ func (ui *UProxy) Run() error {
 		return nil
 	}
 
-	if( !ui.initOK ) {
+	if !ui.initOK {
 
 		err := ui.uniset_init()
 		if err != nil {
 			return err
 		}
 
-		ui.uproxy = uniset_internal_api.NewUProxy(ui.id)
+		ui.uproxy = uniset_internal_api.NewUProxy(ui.name)
 		uniset_internal_api.Uniset_activate_objects()
 		ui.initOK = true
 	}
 
 	ui.term.Add(1)
 	ui.setActive(true)
-	go func() {
-		defer ui.term.Done()
-
-		for ui.IsActive() {
-			// пока-что деятельность имитируем
-			time.Sleep(1 * time.Second)
-		}
-	}()
+	go ui.readProc()
 
 	return nil
+}
+
+// ----------------------------------------------------------------------------------
+// получить значение
+func (ui *UProxy) GetValue(sid SensorID) (int64, bool) {
+	ret := ui.uproxy.SafeGetValue(int64(sid))
+	return ret.GetValue(), ret.GetOk()
 }
 
 // ----------------------------------------------------------------------------------
 // сохранить значение
 func (ui *UProxy) SetValue(sid SensorID, value int64, supplier ObjectID) bool {
 
-	sm := SensorMessage{sid, value, time.Now()}
-	ui.askmap.mut.RLock()
-	defer ui.askmap.mut.RUnlock()
-
-	lst, found := ui.askmap.cmap[sm.Id]
-	if !found {
-		return false
-	}
-
-	u := UMessage{}
-	u.Push(&sm)
-	ui.sendMessage(&u, lst)
-	return true
+	return ui.uproxy.SafeSetValue(int64(sid), value)
 }
 
 // ----------------------------------------------------------------------------------
@@ -241,13 +246,13 @@ func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
 	defer l.mut.RUnlock()
 
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObject)
+		c := e.Value.(UObjecter)
 
 		// делаем по две попытки на подписчика..
 		for i := 0; i < 2; i++ {
 			//finish := time.After(time.Duration(20) * time.Millisecond)
 			select {
-			case c.UEvent() <- *msg:
+			case c.URead() <- *msg:
 
 			//case <-finish:
 			//	if i == 2 {
@@ -267,6 +272,42 @@ func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
 }
 
 // ----------------------------------------------------------------------------------
+// Главная go-рутина читающая сообщения от c++ объекта
+func (ui *UProxy) readProc() {
+
+	defer ui.term.Done()
+
+	for {
+		m := ui.uproxy.SafeWaitMessage(5000)
+
+		if !ui.IsActive() {
+			break
+		}
+
+		if !m.GetOk() {
+			continue
+		}
+
+		ui.askmap.mut.RLock()
+		defer ui.askmap.mut.RUnlock()
+
+		lst, found := ui.askmap.cmap[SensorID(m.GetSinfo().GetId())]
+		if !found {
+			continue
+		}
+
+		// формируем сообщение
+		msg := makeSensorMessage(m.GetSinfo())
+		u := UMessage{}
+		u.Push(msg)
+
+		// рассылаем всем заказчикам
+		ui.sendMessage(&u, lst)
+	}
+}
+
+// ----------------------------------------------------------------------------------
+
 func (l *consumersList) String() string {
 	l.mut.RLock()
 	defer l.mut.RUnlock()
@@ -274,7 +315,7 @@ func (l *consumersList) String() string {
 	var str string
 	str = "["
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObject)
+		c := e.Value.(UObjecter)
 		str = fmt.Sprintf("%s %d", str, c.ID())
 	}
 	str += " ]"

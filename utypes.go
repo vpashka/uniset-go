@@ -4,6 +4,7 @@ package uniset
 import (
 	"fmt"
 	"time"
+	"uniset_internal_api"
 )
 
 type SensorID int64
@@ -29,8 +30,9 @@ type UMessage struct {
 
 // Интерфейс который должны реализовать объекты
 // желающие подписаться на uniset-события
-type UObject interface {
-	UEvent() chan UMessage
+type UObjecter interface {
+	URead() chan UMessage
+	USend() chan UMessage
 	ID() ObjectID
 }
 
@@ -75,4 +77,12 @@ func (u *UMessage) PopAsTimerMessage() (*TimerMessage, bool) {
 
 func (m *SensorMessage) String() string {
 	return fmt.Sprintf("id: %d value: %d", m.Id, m.Value)
+}
+
+func makeSensorMessage(m uniset_internal_api.ShortIOInfo) *SensorMessage {
+	var msg SensorMessage
+	msg.Id = SensorID(m.GetId())
+	msg.Value = m.GetValue()
+	msg.Timestamp = time.Unix(m.GetTv_sec(), m.GetTv_nsec())
+	return &msg
 }

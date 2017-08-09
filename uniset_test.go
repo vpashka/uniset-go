@@ -8,18 +8,23 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// тестовая реализация интерфейса UObject
+// тестовая реализация интерфейса UObjecter
 type TestObject struct {
-	id            uniset.ObjectID
-	ueventChannel chan uniset.UMessage
+	id       uniset.ObjectID
+	rchannel chan uniset.UMessage
+	wchannel chan uniset.UMessage
 }
 
 func (c *TestObject) ID() uniset.ObjectID {
 	return c.id
 }
 
-func (c *TestObject) UEvent() chan uniset.UMessage {
-	return c.ueventChannel
+func (c *TestObject) URead() chan uniset.UMessage {
+	return c.rchannel
+}
+
+func (c *TestObject) USend() chan uniset.UMessage {
+	return c.wchannel
 }
 
 func makeUObjects(beginID uniset.ObjectID) []*TestObject {
@@ -28,7 +33,7 @@ func makeUObjects(beginID uniset.ObjectID) []*TestObject {
 
 	var id uniset.ObjectID = beginID
 	for i := 0; i < len(conslist); i++ {
-		conslist[i] = &TestObject{id, make(chan uniset.UMessage, 10)}
+		conslist[i] = &TestObject{id, make(chan uniset.UMessage, 10), make(chan uniset.UMessage, 10)}
 		id++
 	}
 
@@ -98,7 +103,7 @@ func (c *TestObject) read(t *testing.T, sid uniset.SensorID, timeout_msec int, w
 
 	for {
 		select {
-		case msg := <-c.ueventChannel:
+		case msg := <-c.rchannel:
 
 			sm, ok := msg.PopAsSensorMessage()
 			if !ok {
@@ -139,7 +144,7 @@ func TestAskSensor(t *testing.T) {
 
 	ui := uniset.NewUProxy("UProxy1", "configrue.xml", 0)
 
-	consumer := TestObject{100, make(chan uniset.UMessage, 10)}
+	consumer := TestObject{100, make(chan uniset.UMessage, 10), make(chan uniset.UMessage, 10)}
 
 	ui.AskSensor(10, &consumer)
 
@@ -226,6 +231,32 @@ func TestMultithreadAskSensors(t *testing.T) {
 }
 
 // ----------------------------------------------------------------
+// Тест получения значения датчика
+// ----------------------------------------------------------------
+func TestGetValue(t *testing.T) {
+
+	ui := uniset.NewUProxy("UProxy1", "configure.xml", 53817)
+
+	defer ui.Terminate()
+	ui.Run()
+
+	if !ui.IsActive() {
+		t.Error("UProxy: Not ACTIVE after run")
+	}
+
+	val, ok := ui.GetValue(20)
+
+	if !ok {
+		t.Error("UProxy: GetValue not OK")
+	}
+
+	if ok && val != 20 {
+		t.Errorf("UProxy: GetValue error: value=%d != %d", val, 20)
+	}
+
+}
+
+// ----------------------------------------------------------------
 // Тест заказа датчика (многопоточный заказ)
 // ----------------------------------------------------------------
 // Штатная работы UProxy-а
@@ -255,7 +286,7 @@ func TestUWorking(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	var sid uniset.SensorID = 21
+	var sid uniset.SensorID = 20
 	msgCount := 3
 
 	err = ui.AskSensor(sid, clist[0])

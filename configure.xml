@@ -57,9 +57,8 @@
 
 	<!-- ************************ Датчики ********************** -->
 	<sensors name="Sensors">
-		<item id="1" name="Input1_S" textname="Команда 1" node="" iotype="DI" priority="Medium" default="1" />
-		<item id="4" name="Input2_S" textname="Команда 2" node="" iotype="DI" priority="Medium" />
-		<item id="140" name="Input3_S" textname="Команда 3" node="" iotype="DI" priority="Medium"/>
+		<item id="1" name="Input1_S" textname="Команда 1" iotype="DI" priority="Medium" default="1" />
+		<item id="20" name="AI20_S" textname="AI20" iotype="AI" default="20"/>
 	</sensors>
 
 	<thresholds name="thresholds">
