@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 	"uniset_internal_api"
+	"errors"
 )
 
 type consumersList struct {
@@ -61,6 +62,8 @@ type UProxy struct {
 	id          string
 	confile     string
 	uniset_port int
+	uproxy 		uniset_internal_api.UProxy
+	initOK	bool
 }
 
 // ----------------------------------------------------------------------------------
@@ -74,6 +77,7 @@ func NewUProxy(id string, confile string, uniset_port int) *UProxy {
 	ui.id = id
 	ui.confile = confile
 	ui.uniset_port = uniset_port
+	ui.initOK = false
 	//ui.term.add(1)
 	return &ui
 }
@@ -151,15 +155,14 @@ func (ui *UProxy) Terminate() error {
 
 // ----------------------------------------------------------------------------------
 // инициализация
-func (ui *UProxy) Uniset_init() error {
-
-	//confile := flag.String("confile", "configure.xml", "uniset confile. Default: configure.xml")
-	//uniset_port := flag.String("uniset-port", "", "uniset port")
-	//flag.Parse()
+func (ui *UProxy) uniset_init() error {
 
 	params := uniset_internal_api.ParamsInst()
 	params.Add_str("--confile")
 	params.Add_str(ui.confile)
+
+	//params.Add_str("--ulog-add-levels")
+	//params.Add_str("any")
 
 	if ui.uniset_port > 0 {
 		uport := strconv.Itoa(ui.uniset_port)
@@ -168,6 +171,12 @@ func (ui *UProxy) Uniset_init() error {
 	}
 
 	uniset_internal_api.Uniset_init_params(params, ui.confile)
+
+	myid := uniset_internal_api.GetObjectID(ui.id)
+	if myid == DefaultObjectID {
+		return errors.New( fmt.Sprintf("UProxy::Uniset_init: Unknown ObjectID for %s",ui.id) )
+	}
+
 	return nil
 }
 
@@ -179,9 +188,16 @@ func (ui *UProxy) Run() error {
 		return nil
 	}
 
-	err := ui.Uniset_init()
-	if err != nil {
-		return err
+	if( !ui.initOK ) {
+
+		err := ui.uniset_init()
+		if err != nil {
+			return err
+		}
+
+		ui.uproxy = uniset_internal_api.NewUProxy(ui.id)
+		uniset_internal_api.Uniset_activate_objects()
+		ui.initOK = true
 	}
 
 	ui.term.Add(1)
@@ -200,7 +216,7 @@ func (ui *UProxy) Run() error {
 
 // ----------------------------------------------------------------------------------
 // сохранить значение
-func (ui *UProxy) SetValue(sid SensorID, value int32, supplier ObjectID) bool {
+func (ui *UProxy) SetValue(sid SensorID, value int64, supplier ObjectID) bool {
 
 	sm := SensorMessage{sid, value, time.Now()}
 	ui.askmap.mut.RLock()

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 	"uniset"
-	"uniset_internal_api"
 )
 
 // -----------------------------------------------------------------------------
@@ -229,25 +228,11 @@ func TestMultithreadAskSensors(t *testing.T) {
 // ----------------------------------------------------------------
 // Тест заказа датчика (многопоточный заказ)
 // ----------------------------------------------------------------
-func TestUProxyInit(t *testing.T) {
-	ui := uniset.NewUProxy("UProxy1", "configure.xml", 0)
-
-	ui.Uniset_init()
-
-	oid := uniset_internal_api.GetObjectID("UProxy1")
-
-	if oid != 101 {
-		t.Errorf("Bad ObjectID for UProxy1'  %d!=%d", oid, 101)
-	}
-
-}
-
-// ----------------------------------------------------------------
 // Штатная работы UProxy-а
 // ----------------------------------------------------------------
 func TestUWorking(t *testing.T) {
 
-	ui := uniset.NewUProxy("UProxy1", "configure.xml", 0)
+	ui := uniset.NewUProxy("UProxy1", "configure.xml", 53817)
 
 	clist := makeUObjects(100)
 
@@ -279,7 +264,7 @@ func TestUWorking(t *testing.T) {
 	}
 
 	for i := 0; i < msgCount; i++ {
-		ui.SetValue(sid, 10+int32(i), 2)
+		ui.SetValue(sid, 10+int64(i), 2)
 	}
 
 	rnum := (*clist[0]).read(t, sid, 2000, &wg)

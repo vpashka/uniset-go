@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
-type SensorID int32
-type ObjectID int32
+type SensorID int64
+type ObjectID int64
 
-const DefaultObjectID int32 = -1
+const DefaultObjectID int64 = -1
 
 type SensorMessage struct {
 	Id        SensorID
-	Value     int32
+	Value     int64
 	Timestamp time.Time
 }
 
