@@ -1,6 +1,15 @@
 // UProxy.
-// Объект в реализующий взаимодействие с c++-ой частью,
-// и рассылающий уведомления подписавшимся
+// Объект реализующий взаимодействие с c++-ой частью,
+// и рассылающий уведомления подписавшимся.
+// В текущей реализации сделана попытка уйти от использования mutex-ов
+// и сделать всё взаимодействие через каналы (сообщениями)
+// Т.е. вся работа с внутренними структурами ведётся только из одной го-рутины (см. mainLoop)
+// А все public-функции работают через посылку сообщений, которые обрабатываются в mainLoop().
+// ---------
+// Для получения сообщений желающие должны реализовать интерфейс UObjecter и добавить себя в uproxy
+// при помощи функции Add(). А дальше уже при помощи канала команд можно заказывать датчики,
+// а при помоищи канала "событий" получать уведомления об их изменении
+// ---------
 package uniset
 
 import (
@@ -12,39 +21,9 @@ import (
 	"uniset_internal_api"
 )
 
+// внутренний список объектов
 type consumersList struct {
 	list list.List
-	mut  sync.RWMutex
-}
-
-func newConsumersList() *consumersList {
-	lst := consumersList{}
-	return &lst
-}
-
-func (l *consumersList) add(cons UObjecter) {
-
-	l.mut.Lock()
-	defer l.mut.Unlock()
-	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObjecter)
-		if c.ID() == cons.ID() {
-			return
-		}
-	}
-
-	l.list.PushBack(cons)
-}
-
-type askMap struct {
-	cmap map[SensorID]*consumersList
-	mut  sync.RWMutex
-}
-
-func newAskMap() *askMap {
-	m := askMap{}
-	m.cmap = make(map[SensorID]*consumersList)
-	return &m
 }
 
 // ----------------------------------------------------------------------------------
@@ -52,34 +31,40 @@ func newAskMap() *askMap {
 // При своём запуске Run() создаётся c++-ный объект который реально работает
 // с uniset-системой, а UProxy проксирует запросы к нему и обработку сообщений
 // преобразуя их в события в go-каналах.
+// Следует иметь ввиду, что c++-ый Proxy сам создаётся ещё потоки в системе необходимые ему для работы
 type UProxy struct {
-	// map: sensorID => consumer list
-	askmap      *askMap
+	askmap      map[SensorID]*consumersList
 	active      bool
 	actmutex    sync.RWMutex
 	term        sync.WaitGroup
-	name          string
-	id		ObjectID
+	name        string
+	id          ObjectID
 	confile     string
 	uniset_port int
 	uproxy      uniset_internal_api.UProxy
 	initOK      bool
+	omap        map[ObjectID]UObjecter // список зарегистрированных объектов
+	add         chan UObjecter
+	msg         chan *SensorEvent
 }
 
 // ----------------------------------------------------------------------------------
 // Создание UProxy
 // в качестве аргумента передаётся идентификатор
 // используемый для создания c++-объекта
+// название uniset conf-файла и порт на котором работать
 func NewUProxy(name string, confile string, uniset_port int) *UProxy {
 	ui := UProxy{}
-	ui.askmap = newAskMap()
+	ui.askmap = make(map[SensorID]*consumersList)
 	ui.active = false
 	ui.name = name
 	ui.id = ObjectID(DefaultObjectID)
 	ui.confile = confile
 	ui.uniset_port = uniset_port
 	ui.initOK = false
-	//ui.term.add(1)
+	ui.omap = make(map[ObjectID]UObjecter)
+	ui.add = make(chan UObjecter, 10)
+	ui.msg = make(chan *SensorEvent, 100)
 	return &ui
 }
 
@@ -92,71 +77,12 @@ func (ui *UProxy) IsActive() bool {
 }
 
 // ----------------------------------------------------------------------------------
-func (ui *UProxy) setActive(set bool) {
-	ui.actmutex.Lock()
-	defer ui.actmutex.Unlock()
-	ui.active = set
+// Зарегистрировать UObjecter
+func (ui *UProxy) Add(obj UObjecter) {
+	ui.add <- obj
 }
-
 // ----------------------------------------------------------------------------------
-func (ui *UProxy) Size() int {
-	ui.askmap.mut.RLock()
-	defer ui.askmap.mut.RUnlock()
-	return len(ui.askmap.cmap)
-}
-
-// ----------------------------------------------------------------------------------
-func (ui *UProxy) NumberOfConsumers(sid SensorID) int {
-
-	ui.askmap.mut.RLock()
-	defer ui.askmap.mut.RUnlock()
-
-	v, found := ui.askmap.cmap[sid]
-	if found {
-		return v.list.Len()
-	}
-
-	return 0
-}
-
-// ----------------------------------------------------------------------------------
-func (ui *UProxy) AskSensor(sid SensorID, cons UObjecter) (err error) {
-
-	if !ui.IsActive(){
-		return errors.New(fmt.Sprintf("%s (AskSensor): error: UProxy no activate..",ui.name))
-	}
-
-	ui.askmap.mut.Lock()
-	defer ui.askmap.mut.Unlock()
-
-	// сперва делаем реальный заказ
-	ret := ui.uproxy.SafeAskSensor(int64(sid))
-
-	if !ret {
-		return errors.New(fmt.Sprintf("%s (AskSensor): ask SensorID=%d failed..",ui.name,sid))
-	}
-
-	// потом уже вносим в список заказчиков
-	lst, found := ui.askmap.cmap[sid]
-	if found {
-		lst.add(cons)
-		return nil
-	}
-
-	lst = newConsumersList()
-
-	if lst == nil {
-		return err
-	}
-
-	lst.add(cons)
-	ui.askmap.cmap[sid] = lst
-
-	return nil
-}
-
-// ----------------------------------------------------------------------------------
-// Завершитьь работу UProxy
+// Завершить работу
 func (ui *UProxy) Terminate() error {
 
 	if ui.IsActive() {
@@ -165,6 +91,48 @@ func (ui *UProxy) Terminate() error {
 	}
 
 	return nil
+}
+
+// ----------------------------------------------------------------------------------
+// Начать работу
+func (ui *UProxy) Run() error {
+
+	if ui.IsActive() {
+		return nil
+	}
+
+	if !ui.initOK {
+
+		err := ui.uniset_init()
+		if err != nil {
+			return err
+		}
+
+		ui.uproxy = uniset_internal_api.NewUProxy(ui.name)
+		uniset_internal_api.Uniset_activate_objects()
+		ui.initOK = true
+	}
+
+	ui.term.Add(2)
+	ui.setActive(true)
+
+	go ui.mainLoop()
+	go ui.doReadMessages()
+
+	return nil
+}
+
+// ----------------------------------------------------------------------------------
+// получить значение (напрямую из proxy)
+func (ui *UProxy) GetValue(sid SensorID) (int64, error) {
+
+	ret := ui.uproxy.SafeGetValue(int64(sid))
+
+	if !ret.GetOk() {
+		return 0, errors.New(ret.GetErr())
+	}
+
+	return ret.GetValue(), nil
 }
 
 // ----------------------------------------------------------------------------------
@@ -187,7 +155,10 @@ func (ui *UProxy) uniset_init() error {
 		params.Add_str(uport)
 	}
 
-	uniset_internal_api.Uniset_init_params(params, ui.confile)
+	err := uniset_internal_api.Uniset_init_params(params, ui.confile)
+	if !err.GetOk() {
+		return errors.New(err.GetErr())
+	}
 
 	ui.id = ObjectID(uniset_internal_api.GetObjectID(ui.name))
 	if ui.id == ObjectID(DefaultObjectID) {
@@ -196,88 +167,61 @@ func (ui *UProxy) uniset_init() error {
 
 	return nil
 }
-
 // ----------------------------------------------------------------------------------
-// запустить UProxy в работу
-func (ui *UProxy) Run() error {
+func (ui *UProxy) setActive(set bool) {
+	ui.actmutex.Lock()
+	defer ui.actmutex.Unlock()
+	ui.active = set
+}
+// ----------------------------------------------------------------------------------
+// Главная go-рутина исполняющая команды поступающие от объектов
+func (ui *UProxy) mainLoop() {
 
-	if ui.IsActive() {
-		return nil
-	}
+	defer ui.term.Done()
 
-	if !ui.initOK {
+	for {
 
-		err := ui.uniset_init()
-		if err != nil {
-			return err
+		if !ui.IsActive() {
+			break
 		}
 
-		ui.uproxy = uniset_internal_api.NewUProxy(ui.name)
-		uniset_internal_api.Uniset_activate_objects()
-		ui.initOK = true
-	}
+		select {
+		case obj, ok := <-ui.add:
 
-	ui.term.Add(1)
-	ui.setActive(true)
-	go ui.readProc()
-
-	return nil
-}
-
-// ----------------------------------------------------------------------------------
-// получить значение
-func (ui *UProxy) GetValue(sid SensorID) (int64, bool) {
-	ret := ui.uproxy.SafeGetValue(int64(sid))
-	return ret.GetValue(), ret.GetOk()
-}
-
-// ----------------------------------------------------------------------------------
-// сохранить значение
-func (ui *UProxy) SetValue(sid SensorID, value int64, supplier ObjectID) bool {
-
-	return ui.uproxy.SafeSetValue(int64(sid), value)
-}
-
-// ----------------------------------------------------------------------------------
-// рассылка сообщений объектам
-func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
-
-	l.mut.RLock()
-	defer l.mut.RUnlock()
-
-	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObjecter)
-
-		// делаем по две попытки на подписчика..
-		for i := 0; i < 2; i++ {
-			//finish := time.After(time.Duration(20) * time.Millisecond)
-			select {
-			case c.URead() <- *msg:
-
-			//case <-finish:
-			//	if i == 2 {
-			//		break
-			//	}
-			//	continue
-
-			default:
-				if i == 1 {
-					break
-				}
-				//time.Sleep(10 * time.Millisecond)
-				continue
+			if ok {
+				ui.doAdd(obj)
 			}
+
+			if !ui.IsActive() {
+				break
+			}
+
+		case msg, ok := <-ui.msg:
+
+			if ok {
+				ui.doSensorEvent(msg)
+			}
+
+			if !ui.IsActive() {
+				break
+			}
+
+		default:
+			if !ui.IsActive() {
+				break
+			}
+			ui.doCommands()
 		}
 	}
 }
 
 // ----------------------------------------------------------------------------------
 // Главная go-рутина читающая сообщения от c++ объекта
-func (ui *UProxy) readProc() {
+func (ui *UProxy) doReadMessages() {
 
 	defer ui.term.Done()
-
 	for {
+
 		m := ui.uproxy.SafeWaitMessage(5000)
 
 		if !ui.IsActive() {
@@ -288,29 +232,159 @@ func (ui *UProxy) readProc() {
 			continue
 		}
 
-		ui.askmap.mut.RLock()
-		defer ui.askmap.mut.RUnlock()
+		msg := makeSensorEvent(m.GetSinfo())
 
-		lst, found := ui.askmap.cmap[SensorID(m.GetSinfo().GetId())]
-		if !found {
-			continue
-		}
+		// чтобы вся обработка проходила через одну го-рутину
+		// пересылаем сообщение в основную го-рутину
+		ui.msg <- msg
+	}
+}
+// ----------------------------------------------------------------------------------
+// Добавление нового объекта
+func (ui *UProxy) doAdd(obj UObjecter) {
 
-		// формируем сообщение
-		msg := makeSensorMessage(m.GetSinfo())
-		u := UMessage{}
-		u.Push(msg)
+	if ui.doAddObject(obj) {
+		var ret ActivateEvent
+		ret.Id = obj.ID()
+		umsg := UMessage{ret}
+		ui.send(obj, umsg)
+	}
+}
+// ----------------------------------------------------------------------------------
+// обработка команды "установить значение"
+func (ui *UProxy) doSetValue(sid SensorID, value int64, supplier ObjectID) error {
 
-		// рассылаем всем заказчикам
-		ui.sendMessage(&u, lst)
+	ret := ui.uproxy.SafeSetValue(int64(sid), value)
+	if !ret.GetOk() {
+		return errors.New(ret.GetErr())
+	}
+	return nil
+}
+
+// ----------------------------------------------------------------------------------
+// Рассылка SensorEvent
+func (ui *UProxy) doSensorEvent(m *SensorEvent) {
+
+	lst, found := ui.askmap[m.Id]
+	if !found {
+		return
+	}
+
+	// формируем сообщение
+	u := UMessage{}
+	u.Push(m)
+
+	// рассылаем всем заказчикам
+	ui.sendMessage(&u, lst)
+}
+
+// ----------------------------------------------------------------------------------
+func (ui *UProxy) doCommands() {
+
+	for _, v := range ui.omap {
+		ui.doCommandFromObject(v)
 	}
 }
 
 // ----------------------------------------------------------------------------------
+func (ui *UProxy) doCommandFromObject(obj UObjecter) {
 
+	select {
+	case umsg, ok := <-obj.UCommand():
+
+		if !ok {
+			return
+		}
+
+		msg, ok := umsg.PopAsAskCommand()
+		if ok {
+			err := ui.doAskSensor(msg.Id, obj)
+			msg.Result = (err != nil)
+			ret := UMessage{msg}
+			ui.send(obj, ret)
+			return
+		}
+
+		ask, ok := umsg.PopAsSetValueCommand()
+		if ok {
+			err := ui.doSetValue(ask.Id, int64(ask.Value), obj.ID())
+			ask.Result = (err == nil)
+			ret := UMessage{ask}
+			ui.send(obj, ret)
+		}
+
+	default:
+	}
+}
+
+// ----------------------------------------------------------------------------------
+// обработка команды добавления объекта
+func (ui *UProxy) doAddObject(obj UObjecter) bool {
+
+	_, found := ui.omap[obj.ID()]
+	if found {
+		return true
+	}
+
+	ui.omap[obj.ID()] = obj
+	return true
+}
+
+// ----------------------------------------------------------------------------------
+// обработка команды "заказ датчика"
+func (ui *UProxy) doAskSensor(sid SensorID, cons UObjecter) (err error) {
+
+	// сперва делаем реальный заказ
+	ret := ui.uproxy.SafeAskSensor(int64(sid))
+
+	if !ret.GetOk() {
+		return errors.New(fmt.Sprintf("%s (doAskSensor): sid=%d error: %s", ui.name, sid, ret.GetErr()))
+	}
+
+	// потом уже вносим в список заказчиков
+	lst, found := ui.askmap[sid]
+	if found {
+		lst.add(cons)
+		return nil
+	}
+
+	lst = newConsumersList()
+
+	if lst == nil {
+		return err
+	}
+
+	lst.add(cons)
+	ui.askmap[sid] = lst
+
+	return nil
+}
+
+// ----------------------------------------------------------------------------------
+// рассылка сообщений по списку
+func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
+
+	for e := l.list.Front(); e != nil; e = e.Next() {
+		c := e.Value.(UObjecter)
+		ui.send(c,*msg)
+	}
+}
+// ----------------------------------------------------------------------------------
+// посылка сообщения объекту
+func (ui *UProxy) send(obj UObjecter, msg UMessage) {
+
+	// делаем две попытки
+	for i := 0; i < 2; i++ {
+		select {
+		case obj.URead() <- msg:
+			return
+
+		default:
+		}
+	}
+}
+// ----------------------------------------------------------------------------------
 func (l *consumersList) String() string {
-	l.mut.RLock()
-	defer l.mut.RUnlock()
 
 	var str string
 	str = "["
@@ -320,4 +394,23 @@ func (l *consumersList) String() string {
 	}
 	str += " ]"
 	return str
+}
+
+// ----------------------------------------------------------------------------------
+func (l *consumersList) add(cons UObjecter) {
+
+	for e := l.list.Front(); e != nil; e = e.Next() {
+		c := e.Value.(UObjecter)
+		if c.ID() == cons.ID() {
+			return
+		}
+	}
+
+	l.list.PushBack(cons)
+}
+
+// ----------------------------------------------------------------------------------
+func newConsumersList() *consumersList {
+	lst := consumersList{}
+	return &lst
 }

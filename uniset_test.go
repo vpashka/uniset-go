@@ -13,49 +13,98 @@ type TestObject struct {
 	id       uniset.ObjectID
 	rchannel chan uniset.UMessage
 	wchannel chan uniset.UMessage
+
+	SensorEventCounter   uint64
+	AskResultCounter     uint64
+	ActivateEventCounter uint64
 }
 
 func (c *TestObject) ID() uniset.ObjectID {
 	return c.id
 }
 
-func (c *TestObject) URead() chan uniset.UMessage {
+func (c *TestObject) URead() chan<- uniset.UMessage {
 	return c.rchannel
 }
 
-func (c *TestObject) USend() chan uniset.UMessage {
+func (c *TestObject) UCommand() <-chan uniset.UMessage {
 	return c.wchannel
 }
 
-func makeUObjects(beginID uniset.ObjectID) []*TestObject {
+// -----------------------------------------------------------------------------
+func (c *TestObject) AskSensor(sid uniset.SensorID) {
+	var umsg uniset.UMessage
+	umsg.Push(uniset.AskCommand{sid, false})
+	c.wchannel <- umsg
+}
 
-	conslist := make([]*TestObject, 10, 10)
+// -----------------------------------------------------------------------------
+func (c *TestObject) ReadEvent(timeout_msec time.Duration) {
+
+	for {
+
+		timeout := time.After(timeout_msec * time.Millisecond)
+		select {
+		case umsg := <-c.rchannel:
+
+			_, ok := umsg.PopAsAskCommand()
+			if ok {
+				c.AskResultCounter++
+				continue
+			}
+
+			_, ok = umsg.PopAsSensorEvent()
+			if ok {
+				c.SensorEventCounter++
+				continue
+			}
+
+			_, ok = umsg.PopAsActivateEvent()
+			if ok {
+				c.ActivateEventCounter++
+				continue
+			}
+
+		case <-timeout:
+			return
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
+func makeUObjects(beginID uniset.ObjectID, count int) []*TestObject {
+
+	conslist := make([]*TestObject, count, count)
 
 	var id uniset.ObjectID = beginID
 	for i := 0; i < len(conslist); i++ {
-		conslist[i] = &TestObject{id, make(chan uniset.UMessage, 10), make(chan uniset.UMessage, 10)}
+		conslist[i] = &TestObject{id, make(chan uniset.UMessage, 10), make(chan uniset.UMessage, 10), 0, 0, 0}
 		id++
 	}
 
 	return conslist
 }
 
+// -----------------------------------------------------------------------------
+// Тесты
+// -----------------------------------------------------------------------------
+
 // ----------------------------------------------------------------
-// Преобразование сообщений UMessage <--> SensorMessage
+// Преобразование сообщений UMessage <--> SensorEvent
 // ----------------------------------------------------------------
 func TestUMessage2SensorMessage(t *testing.T) {
 
-	sm := uniset.SensorMessage{30, 10500, time.Now()}
+	sm := uniset.SensorEvent{30, 10500, time.Now()}
 	u := uniset.UMessage{}
 	u.Push(sm)
 
-	_, ok := u.PopAsTimerMessage()
+	_, ok := u.PopAsSetValueCommand()
 
 	if ok {
-		t.Errorf("SM --> UM --> TM: ?!!")
+		t.Errorf("SM --> UM --> CommandSetValue?!!")
 	}
 
-	sm2, ok := u.PopAsSensorMessage()
+	sm2, ok := u.PopAsSensorEvent()
 
 	if sm2.Id != sm.Id {
 		t.Errorf("SM --> UM --> SM: Incorrect ID")
@@ -72,24 +121,50 @@ func TestUMessage2SensorMessage(t *testing.T) {
 }
 
 // ----------------------------------------------------------------
-// Преобразование сообщений UMessage <--> TimerMessage
+// Преобразование сообщений UMessage <--> AskCommand
 // ----------------------------------------------------------------
-func TestUMessage2TimerMessage(t *testing.T) {
+func TestUMessage2CmdAskSensor(t *testing.T) {
 
-	tm := uniset.TimerMessage{1}
+	am := uniset.AskCommand{1, false}
 	u := uniset.UMessage{}
-	u.Push(tm)
+	u.Push(am)
 
-	_, ok := u.PopAsSensorMessage()
+	_, ok := u.PopAsSetValueCommand()
 
 	if ok {
-		t.Errorf("TM --> UM --> SM: ?!!")
+		t.Errorf("Ask --> UM --> CommandSetValue?!")
 	}
 
-	tm2, ok := u.PopAsTimerMessage()
+	am2, ok := u.PopAsAskCommand()
 
-	if tm2.Id != tm.Id {
-		t.Errorf("TM --> UM --> TM: Incorrect ID")
+	if am2.Id != am.Id {
+		t.Errorf("Ask --> UM --> Ask: Incorrect ID")
+	}
+}
+
+// ----------------------------------------------------------------
+// Преобразование сообщений UMessage <--> SetValueCommand
+// ----------------------------------------------------------------
+func TestUMessage2CmdSetValue(t *testing.T) {
+
+	m := uniset.SetValueCommand{1, 4000, false}
+	u := uniset.UMessage{}
+	u.Push(m)
+
+	_, ok := u.PopAsAskCommand()
+
+	if ok {
+		t.Errorf("Set --> UM --> CommandAskSensor!")
+	}
+
+	m2, ok := u.PopAsSetValueCommand()
+
+	if m2.Id != m.Id {
+		t.Errorf("Set --> UM --> Set: Incorrect ID")
+	}
+
+	if m2.Value != m.Value {
+		t.Errorf("Set --> UM --> Set: Incorrect Value")
 	}
 }
 
@@ -105,7 +180,7 @@ func (c *TestObject) read(t *testing.T, sid uniset.SensorID, timeout_msec int, w
 		select {
 		case msg := <-c.rchannel:
 
-			sm, ok := msg.PopAsSensorMessage()
+			sm, ok := msg.PopAsSensorEvent()
 			if !ok {
 				t.Errorf("ReadMessage: unknown message")
 				continue
@@ -125,132 +200,34 @@ func (c *TestObject) read(t *testing.T, sid uniset.SensorID, timeout_msec int, w
 	return num
 }
 
-func sendMessages(ui *uniset.UProxy, t *testing.T, msg *uniset.SensorMessage, count int, wg *sync.WaitGroup) {
-
-	defer wg.Done()
-
-	for i := 0; i < count; i++ {
-		ok := ui.SetValue(msg.Id, msg.Value, 1)
-		if !ok {
-			t.Error("SendMessages FAILED")
-		}
-	}
-}
-
-// ----------------------------------------------------------------
-// Тест заказа датчика (простой заказ)
-// ----------------------------------------------------------------
-func TestAskSensor(t *testing.T) {
-
-	ui := uniset.NewUProxy("UProxy1", "configrue.xml", 0)
-
-	consumer := TestObject{100, make(chan uniset.UMessage, 10), make(chan uniset.UMessage, 10)}
-
-	ui.AskSensor(10, &consumer)
-
-	if ui.Size() != 1 {
-		t.Errorf("AskSensor: size %d != %d", ui.Size(), 1)
-	}
-
-	num := ui.NumberOfConsumers(10)
-	if num != 1 {
-		t.Errorf("AskSensor: NumberOfCunsumers=%d != %d", num, 1)
-	}
-
-	sm1 := uniset.SensorMessage{10, 10500, time.Now()}
-
-	msgCount := 3
-	timeout := 800
-	var wg sync.WaitGroup
-
-	wg.Add(2)
-
-	go sendMessages(ui, t, &sm1, msgCount, &wg)
-
-	rnum := consumer.read(t, sm1.Id, timeout, &wg)
-
-	if rnum < msgCount {
-		t.Errorf("Count of received messages %d < %d", rnum, msgCount)
-	}
-}
-
-func askSensor(ui *uniset.UProxy, clist *[]*TestObject, sid uniset.SensorID, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	for _, c := range *clist {
-		ui.AskSensor(sid, c)
-	}
-}
-
-// ----------------------------------------------------------------
-// Тест заказа датчика (многопоточный заказ)
-// ----------------------------------------------------------------
-func TestMultithreadAskSensors(t *testing.T) {
-
-	ui := uniset.NewUProxy("UProxy1", "configure.xml", 0)
-
-	conslist := makeUObjects(100)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	l1 := conslist[0:5]
-	l2 := conslist[5:len(conslist)]
-
-	go askSensor(ui, &l1, 30, &wg)
-	go askSensor(ui, &l2, 30, &wg)
-
-	wg.Wait()
-
-	if ui.NumberOfConsumers(30) != len(conslist) {
-		t.Errorf("NumberOfConsumers: size %d != %d", ui.NumberOfConsumers(30), len(conslist))
-	}
-
-	sm := uniset.SensorMessage{30, 10500, time.Now()}
-
-	msgCount := 3
-	timeout := 800
-
-	var wg2 sync.WaitGroup
-	wg2.Add(12)
-
-	go sendMessages(ui, t, &sm, msgCount, &wg2)
-	go sendMessages(ui, t, &sm, msgCount, &wg2)
-
-	rnum := (*conslist[0]).read(t, 30, timeout, &wg2)
-	if rnum < msgCount {
-		t.Errorf("TObject1: Count of received messages %d < %d", rnum, msgCount)
-	}
-
-	rnum = (*conslist[1]).read(t, 30, timeout, &wg2)
-	if rnum < msgCount {
-		t.Errorf("TObject2: Count of received messages %d < %d", rnum, msgCount)
-	}
-
-	wg2.Done()
-}
-
 // ----------------------------------------------------------------
 // Тест получения значения датчика
 // ----------------------------------------------------------------
 func TestGetValue(t *testing.T) {
 
-	ui := uniset.NewUProxy("UProxy1", "configure.xml", 53817)
+	ui, err := uniset.NewUInterface("configure.xml", 53817)
+	if err != nil {
+		t.Error("UInterface: error: %s", err)
+	}
 
-	defer ui.Terminate()
-	ui.Run()
+	uproxy := uniset.NewUProxy("UProxy1", "configure.xml", 53817)
 
-	if !ui.IsActive() {
+	defer uproxy.Terminate()
+	uproxy.Run()
+
+	if !uproxy.IsActive() {
 		t.Error("UProxy: Not ACTIVE after run")
 	}
 
-	val, ok := ui.GetValue(20)
+	ui.SetValue(20, 20, -1)
 
-	if !ok {
-		t.Error("UProxy: GetValue not OK")
+	val, err := uproxy.GetValue(20)
+
+	if err != nil {
+		t.Error("UProxy: GetValue error: %s", err)
 	}
 
-	if ok && val != 20 {
+	if err == nil && val != 20 {
 		t.Errorf("UProxy: GetValue error: value=%d != %d", val, 20)
 	}
 
@@ -259,49 +236,84 @@ func TestGetValue(t *testing.T) {
 // ----------------------------------------------------------------
 // Тест заказа датчика (многопоточный заказ)
 // ----------------------------------------------------------------
+func doAskSensors(t *testing.T, sid uniset.SensorID, list []*TestObject, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	for _, obj := range list {
+		obj.AskSensor(sid)
+	}
+}
+
+func doReadSensorEvents(t *testing.T, timeout_msec time.Duration, list []*TestObject, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	for _, obj := range list {
+		obj.ReadEvent(timeout_msec)
+	}
+}
+
+// ----------------------------------------------------------------
 // Штатная работы UProxy-а
 // ----------------------------------------------------------------
 func TestUWorking(t *testing.T) {
 
-	ui := uniset.NewUProxy("UProxy1", "configure.xml", 53817)
+	uproxy := uniset.NewUProxy("UProxy2", "configure.xml", 53817)
+	ui, err := uniset.NewUInterface("configure.xml", 53817)
 
-	clist := makeUObjects(100)
+	if err != nil {
+		t.Error("UInterface: error: %s", err)
+	}
 
-	err := ui.Run()
+	maxNum := 4
+
+	clist := makeUObjects(100, maxNum)
+
+	defer uproxy.Terminate()
+
+	err = uproxy.Run()
 	if err != nil {
 		t.Errorf("UProxy: Run error: %s", err.Error())
 	}
 
-	ui.Terminate()
-
-	if ui.IsActive() {
-		t.Error("UProxy: is active after terminate!")
+	if !uproxy.IsActive() {
+		t.Error("UProxy: active failed!")
 	}
 
-	ui.Run()
-	if !ui.IsActive() {
-		t.Error("UProxy: NOT active after run!")
+	// активируем объекты
+	for _, c := range clist {
+		uproxy.Add(c)
 	}
+
+	time.Sleep(2 * time.Second)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	var sid uniset.SensorID = 20
+
+	go doAskSensors(t, sid, clist[0:maxNum], &wg)
+
 	msgCount := 3
-
-	err = ui.AskSensor(sid, clist[0])
-	if err != nil {
-		t.Errorf("AskSensor error: %s", err)
-	}
-
 	for i := 0; i < msgCount; i++ {
-		ui.SetValue(sid, 10+int64(i), 2)
+		err = ui.SetValue(sid, 10+int64(i), -2)
+		if err != nil {
+			t.Errorf("SetValue error: %s", err)
+		}
 	}
 
-	rnum := (*clist[0]).read(t, sid, 2000, &wg)
-	if rnum < msgCount {
-		t.Errorf("Count of received messages %d < %d", rnum, msgCount)
-	}
+	go doReadSensorEvents(t, 300, clist[0:maxNum], &wg)
 
-	//wg.Wait()
+	wg.Wait()
+
+	for _, c := range clist[0:maxNum] {
+		if c.SensorEventCounter < uint64(msgCount) {
+			t.Errorf("UObjecter %d: SensorEventCounter = %d < %d", c.ID(), c.SensorEventCounter, msgCount)
+		}
+
+		if c.ActivateEventCounter < 1 {
+			t.Errorf("UObjecter %d: ActivateEventCounter = %d < 1", c.ID(), c.ActivateEventCounter)
+		}
+	}
 }
