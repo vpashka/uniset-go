@@ -16,7 +16,7 @@ const DefaultObjectID int64 = -1
 // Интерфейс который должны реализовать объекты
 // желающие подписаться на uniset-события
 type UObjecter interface {
-	URead() chan<- UMessage
+	UEvent() chan<- UMessage
 	UCommand() <-chan UMessage
 	ID() ObjectID
 }

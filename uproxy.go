@@ -19,6 +19,10 @@ import (
 	"strconv"
 	"sync"
 	"uniset_internal_api"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 // внутренний список объектов
@@ -86,6 +90,7 @@ func (ui *UProxy) Add(obj UObjecter) {
 func (ui *UProxy) Terminate() error {
 
 	if ui.IsActive() {
+		ui.uproxy.Terminate()
 		ui.setActive(false)
 		ui.term.Wait()
 	}
@@ -93,6 +98,16 @@ func (ui *UProxy) Terminate() error {
 	return nil
 }
 
+// ----------------------------------------------------------------------------------
+// Ожидание завершения работы
+func (ui *UProxy) WaitFinish() {
+
+	if !ui.IsActive() {
+		return
+	}
+
+	ui.term.Wait()
+}
 // ----------------------------------------------------------------------------------
 // Начать работу
 func (ui *UProxy) Run() error {
@@ -109,12 +124,26 @@ func (ui *UProxy) Run() error {
 		}
 
 		ui.uproxy = uniset_internal_api.NewUProxy(ui.name)
-		uniset_internal_api.Uniset_activate_objects()
+		ui.uproxy.Run(200)
 		ui.initOK = true
+
+		signalChannel := make(chan os.Signal, 2)
+		signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			sig := <-signalChannel
+			switch sig {
+			case os.Interrupt:
+				ui.Terminate()
+			case syscall.SIGTERM:
+				ui.Terminate()
+			}
+		}()
+		// ...
 	}
 
-	ui.term.Add(2)
 	ui.setActive(true)
+
+	ui.term.Add(1)
 
 	go ui.mainLoop()
 	go ui.doReadMessages()
@@ -143,9 +172,9 @@ func (ui *UProxy) uniset_init() error {
 	params.Add_str("--confile")
 	params.Add_str(ui.confile)
 
-	//params.Add_str("--ulog-add-levels")
-	//params.Add_str("any")
-	//
+	params.Add_str("--ulog-add-levels")
+	params.Add_str("system,crit,warn")
+
 	//params.Add_str("--UProxy1-log-add-levels")
 	//params.Add_str("any")
 
@@ -210,7 +239,9 @@ func (ui *UProxy) mainLoop() {
 			if !ui.IsActive() {
 				break
 			}
-			ui.doCommands()
+			if !ui.doCommands() {
+				time.Sleep(100*time.Millisecond)
+			}
 		}
 	}
 }
@@ -279,21 +310,26 @@ func (ui *UProxy) doSensorEvent(m *SensorEvent) {
 }
 
 // ----------------------------------------------------------------------------------
-func (ui *UProxy) doCommands() {
+func (ui *UProxy) doCommands() bool {
 
+	ret := false
 	for _, v := range ui.omap {
-		ui.doCommandFromObject(v)
+		if ui.doCommandFromObject(v) {
+			ret = true
+		}
 	}
+
+	return ret
 }
 
 // ----------------------------------------------------------------------------------
-func (ui *UProxy) doCommandFromObject(obj UObjecter) {
+func (ui *UProxy) doCommandFromObject(obj UObjecter) bool {
 
 	select {
 	case umsg, ok := <-obj.UCommand():
 
 		if !ok {
-			return
+			return false
 		}
 
 		msg, ok := umsg.PopAsAskCommand()
@@ -302,7 +338,7 @@ func (ui *UProxy) doCommandFromObject(obj UObjecter) {
 			msg.Result = (err != nil)
 			ret := UMessage{msg}
 			ui.send(obj, ret)
-			return
+			return true
 		}
 
 		ask, ok := umsg.PopAsSetValueCommand()
@@ -311,10 +347,15 @@ func (ui *UProxy) doCommandFromObject(obj UObjecter) {
 			ask.Result = (err == nil)
 			ret := UMessage{ask}
 			ui.send(obj, ret)
+			return true
 		}
+
+		return true
 
 	default:
 	}
+
+	return false;
 }
 
 // ----------------------------------------------------------------------------------
@@ -376,7 +417,7 @@ func (ui *UProxy) send(obj UObjecter, msg UMessage) {
 	// делаем две попытки
 	for i := 0; i < 2; i++ {
 		select {
-		case obj.URead() <- msg:
+		case obj.UEvent() <- msg:
 			return
 
 		default:

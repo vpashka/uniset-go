@@ -23,7 +23,7 @@ func (c *TestObject) ID() uniset.ObjectID {
 	return c.id
 }
 
-func (c *TestObject) URead() chan<- uniset.UMessage {
+func (c *TestObject) UEvent() chan<- uniset.UMessage {
 	return c.rchannel
 }
 
