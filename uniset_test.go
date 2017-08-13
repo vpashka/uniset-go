@@ -33,9 +33,7 @@ func (c *TestObject) UCommand() <-chan uniset.UMessage {
 
 // -----------------------------------------------------------------------------
 func (c *TestObject) AskSensor(sid uniset.SensorID) {
-	var umsg uniset.UMessage
-	umsg.Push(uniset.AskCommand{sid, false})
-	c.wchannel <- umsg
+	c.wchannel <- uniset.UMessage{&uniset.AskCommand{sid, false}}
 }
 
 // -----------------------------------------------------------------------------
@@ -95,8 +93,7 @@ func makeUObjects(beginID uniset.ObjectID, count int) []*TestObject {
 func TestUMessage2SensorMessage(t *testing.T) {
 
 	sm := uniset.SensorEvent{30, 10500, time.Now()}
-	u := uniset.UMessage{}
-	u.Push(sm)
+	u := uniset.UMessage{&sm}
 
 	_, ok := u.PopAsSetValueCommand()
 
@@ -126,8 +123,7 @@ func TestUMessage2SensorMessage(t *testing.T) {
 func TestUMessage2CmdAskSensor(t *testing.T) {
 
 	am := uniset.AskCommand{1, false}
-	u := uniset.UMessage{}
-	u.Push(am)
+	u := uniset.UMessage{&am}
 
 	_, ok := u.PopAsSetValueCommand()
 
@@ -149,7 +145,7 @@ func TestUMessage2CmdSetValue(t *testing.T) {
 
 	m := uniset.SetValueCommand{1, 4000, false}
 	u := uniset.UMessage{}
-	u.Push(m)
+	//u.Push(m)
 
 	_, ok := u.PopAsAskCommand()
 

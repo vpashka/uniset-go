@@ -66,3 +66,19 @@ func (ui *UInterface) GetValue(sid SensorID) (int64, error) {
 
 	return err.GetValue(), nil
 }
+
+// ----------------------------------------------------------------------------------
+// обобщённая вспомогательная функция - обёртка для заказа датчиков
+func AskSensor(ch chan<- UMessage, sid SensorID) {
+
+	ch <- UMessage{&AskCommand{sid, false}}
+}
+
+// ----------------------------------------------------------------------------------
+// обобщённая вспомогательная функция - обёртка для выставления значения
+func SetValue(ch chan<- UMessage, sid SensorID, value int64) {
+
+	ch <- UMessage{&SetValueCommand{sid, value, false}}
+}
+
+// ----------------------------------------------------------------------------------

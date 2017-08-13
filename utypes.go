@@ -23,16 +23,20 @@ type UObjecter interface {
 
 // ----------------------------------------------------------------------------------
 // Интерфейс для сообщений "обёртка"
-// имеет две вспомогательные функции Push(msg) и Pop(msg)
+// имеет две вспомогательные функции Push(Msg) и Pop(Msg)
 type UMessage struct {
-	msg interface{}
+	Msg interface{}
 	//Timestamp time.Time
 }
 
 // ----------------------------------------------------------------------------------
 // сообщение о том, что объект успешно активирован
 type ActivateEvent struct {
-	Id ObjectID
+}
+
+// ----------------------------------------------------------------------------------
+// сообщение о завершении работы
+type FinishEvent struct {
 }
 
 // ----------------------------------------------------------------------------------
@@ -51,30 +55,21 @@ type AskCommand struct {
 // ----------------------------------------------------------------------------------
 type SetValueCommand struct {
 	Id     SensorID
-	Value  int32
+	Value  int64
 	Result bool
-}
-
-// ----------------------------------------------------------------------------------
-func (u *UMessage) Push(m interface{}) {
-	u.msg = m
-}
-
-func (u *UMessage) Pop() interface{} {
-	return u.msg
 }
 
 // ----------------------------------------------------------------------------------
 func (u *UMessage) PopAsSensorEvent() (*SensorEvent, bool) {
 
-	switch u.msg.(type) {
+	switch u.Msg.(type) {
 
 	case SensorEvent:
-		sm := u.msg.(SensorEvent)
+		sm := u.Msg.(SensorEvent)
 		return &sm, true
 
 	case *SensorEvent:
-		sm := u.msg.(*SensorEvent)
+		sm := u.Msg.(*SensorEvent)
 		return sm, true
 	}
 
@@ -83,14 +78,14 @@ func (u *UMessage) PopAsSensorEvent() (*SensorEvent, bool) {
 
 // ----------------------------------------------------------------------------------
 func (u *UMessage) PopAsAskCommand() (*AskCommand, bool) {
-	switch u.msg.(type) {
+	switch u.Msg.(type) {
 
 	case AskCommand:
-		c := u.msg.(AskCommand)
+		c := u.Msg.(AskCommand)
 		return &c, true
 
 	case *AskCommand:
-		c := u.msg.(*AskCommand)
+		c := u.Msg.(*AskCommand)
 		return c, true
 	}
 
@@ -99,14 +94,14 @@ func (u *UMessage) PopAsAskCommand() (*AskCommand, bool) {
 
 // ----------------------------------------------------------------------------------
 func (u *UMessage) PopAsSetValueCommand() (*SetValueCommand, bool) {
-	switch u.msg.(type) {
+	switch u.Msg.(type) {
 
 	case SetValueCommand:
-		c := u.msg.(SetValueCommand)
+		c := u.Msg.(SetValueCommand)
 		return &c, true
 
 	case *SetValueCommand:
-		c := u.msg.(*SetValueCommand)
+		c := u.Msg.(*SetValueCommand)
 		return c, true
 	}
 
@@ -115,14 +110,30 @@ func (u *UMessage) PopAsSetValueCommand() (*SetValueCommand, bool) {
 
 // ----------------------------------------------------------------------------------
 func (u *UMessage) PopAsActivateEvent() (*ActivateEvent, bool) {
-	switch u.msg.(type) {
+	switch u.Msg.(type) {
 
 	case ActivateEvent:
-		c := u.msg.(ActivateEvent)
+		c := u.Msg.(ActivateEvent)
 		return &c, true
 
 	case *ActivateEvent:
-		c := u.msg.(*ActivateEvent)
+		c := u.Msg.(*ActivateEvent)
+		return c, true
+	}
+
+	return nil, false
+}
+
+// ----------------------------------------------------------------------------------
+func (u *UMessage) PopAsFinishEvent() (*FinishEvent, bool) {
+	switch u.Msg.(type) {
+
+	case FinishEvent:
+		c := u.Msg.(FinishEvent)
+		return &c, true
+
+	case *FinishEvent:
+		c := u.Msg.(*FinishEvent)
 		return c, true
 	}
 

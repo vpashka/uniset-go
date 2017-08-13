@@ -16,13 +16,13 @@ import (
 	"container/list"
 	"errors"
 	"fmt"
-	"strconv"
-	"sync"
-	"uniset_internal_api"
 	"os"
 	"os/signal"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
+	"uniset_internal_api"
 )
 
 // внутренний список объектов
@@ -85,6 +85,7 @@ func (ui *UProxy) IsActive() bool {
 func (ui *UProxy) Add(obj UObjecter) {
 	ui.add <- obj
 }
+
 // ----------------------------------------------------------------------------------
 // Завершить работу
 func (ui *UProxy) Terminate() error {
@@ -108,6 +109,7 @@ func (ui *UProxy) WaitFinish() {
 
 	ui.term.Wait()
 }
+
 // ----------------------------------------------------------------------------------
 // Начать работу
 func (ui *UProxy) Run() error {
@@ -196,12 +198,14 @@ func (ui *UProxy) uniset_init() error {
 
 	return nil
 }
+
 // ----------------------------------------------------------------------------------
 func (ui *UProxy) setActive(set bool) {
 	ui.actmutex.Lock()
 	defer ui.actmutex.Unlock()
 	ui.active = set
 }
+
 // ----------------------------------------------------------------------------------
 // Главная go-рутина исполняющая команды поступающие от объектов
 func (ui *UProxy) mainLoop() {
@@ -227,12 +231,12 @@ func (ui *UProxy) mainLoop() {
 
 		case msg, ok := <-ui.msg:
 
-			if ok {
-				ui.doSensorEvent(msg)
-			}
-
 			if !ui.IsActive() {
 				break
+			}
+
+			if ok {
+				ui.doSensorEvent(msg)
 			}
 
 		default:
@@ -240,7 +244,7 @@ func (ui *UProxy) mainLoop() {
 				break
 			}
 			if !ui.doCommands() {
-				time.Sleep(100*time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 			}
 		}
 	}
@@ -266,21 +270,31 @@ func (ui *UProxy) doReadMessages() {
 		msg := makeSensorEvent(m.GetSinfo())
 
 		// чтобы вся обработка проходила через одну го-рутину
-		// пересылаем сообщение в основную го-рутину
+		// пересылаем сообщение в mainLoop
 		ui.msg <- msg
 	}
 }
+
 // ----------------------------------------------------------------------------------
 // Добавление нового объекта
 func (ui *UProxy) doAdd(obj UObjecter) {
 
 	if ui.doAddObject(obj) {
-		var ret ActivateEvent
-		ret.Id = obj.ID()
-		umsg := UMessage{ret}
+		umsg := UMessage{&ActivateEvent{}}
 		ui.send(obj, umsg)
 	}
 }
+
+// ----------------------------------------------------------------------------------
+// Рассылка всем уведомления о завершении работы
+func (ui *UProxy) doFinish() {
+
+	msg := UMessage{&FinishEvent{}}
+	for _, obj := range ui.omap {
+		ui.send(obj, msg)
+	}
+}
+
 // ----------------------------------------------------------------------------------
 // обработка команды "установить значение"
 func (ui *UProxy) doSetValue(sid SensorID, value int64, supplier ObjectID) error {
@@ -298,15 +312,12 @@ func (ui *UProxy) doSensorEvent(m *SensorEvent) {
 
 	lst, found := ui.askmap[m.Id]
 	if !found {
+		fmt.Printf("sensor %d not found in askmap\n", m.Id)
 		return
 	}
 
-	// формируем сообщение
-	u := UMessage{}
-	u.Push(m)
-
 	// рассылаем всем заказчикам
-	ui.sendMessage(&u, lst)
+	ui.sendMessage(&UMessage{m}, lst)
 }
 
 // ----------------------------------------------------------------------------------
@@ -334,10 +345,14 @@ func (ui *UProxy) doCommandFromObject(obj UObjecter) bool {
 
 		msg, ok := umsg.PopAsAskCommand()
 		if ok {
-			err := ui.doAskSensor(msg.Id, obj)
-			msg.Result = (err != nil)
-			ret := UMessage{msg}
-			ui.send(obj, ret)
+			ret, err := ui.doAskSensor(msg.Id, obj)
+			if err != nil {
+				msg.Result = false
+				ui.send(obj, UMessage{&msg})
+			} else {
+				ui.send(obj, *ret)
+			}
+
 			return true
 		}
 
@@ -345,8 +360,7 @@ func (ui *UProxy) doCommandFromObject(obj UObjecter) bool {
 		if ok {
 			err := ui.doSetValue(ask.Id, int64(ask.Value), obj.ID())
 			ask.Result = (err == nil)
-			ret := UMessage{ask}
-			ui.send(obj, ret)
+			ui.send(obj, UMessage{&ask})
 			return true
 		}
 
@@ -355,7 +369,7 @@ func (ui *UProxy) doCommandFromObject(obj UObjecter) bool {
 	default:
 	}
 
-	return false;
+	return false
 }
 
 // ----------------------------------------------------------------------------------
@@ -373,32 +387,44 @@ func (ui *UProxy) doAddObject(obj UObjecter) bool {
 
 // ----------------------------------------------------------------------------------
 // обработка команды "заказ датчика"
-func (ui *UProxy) doAskSensor(sid SensorID, cons UObjecter) (err error) {
+func (ui *UProxy) doAskSensor(sid SensorID, cons UObjecter) (msg *UMessage, err error) {
 
+	//fmt.Printf("ASK SENSOR: %d for uobjecter %d\n",sid,cons.ID())
+
+	// На текущий момент uniset_internal_api.UProxy
+	// не поддерживает заказ датчиков..
 	// сперва делаем реальный заказ
-	ret := ui.uproxy.SafeAskSensor(int64(sid))
+	//ret := ui.uproxy.SafeAskSensor(int64(sid))
+	//
+	//if !ret.GetOk() {
+	//	return errors.New(fmt.Sprintf("%s (doAskSensor): sid=%d error: %s", ui.name, sid, ret.GetErr()))
+	//}
 
-	if !ret.GetOk() {
-		return errors.New(fmt.Sprintf("%s (doAskSensor): sid=%d error: %s", ui.name, sid, ret.GetErr()))
+	// Поэтому сперва получаем текущее значение
+	val, err := ui.GetValue(sid)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("%s (doAskSensor): error: %s", ui.name, err))
 	}
 
-	// потом уже вносим в список заказчиков
+	msg = &UMessage{&SensorEvent{sid, val, time.Now()}}
+
+	// вносим в список заказчиков
 	lst, found := ui.askmap[sid]
 	if found {
 		lst.add(cons)
-		return nil
+		return msg, nil
 	}
 
 	lst = newConsumersList()
 
 	if lst == nil {
-		return err
+		return nil, err
 	}
 
 	lst.add(cons)
 	ui.askmap[sid] = lst
 
-	return nil
+	return msg, nil
 }
 
 // ----------------------------------------------------------------------------------
@@ -407,9 +433,10 @@ func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
 
 	for e := l.list.Front(); e != nil; e = e.Next() {
 		c := e.Value.(UObjecter)
-		ui.send(c,*msg)
+		ui.send(c, *msg)
 	}
 }
+
 // ----------------------------------------------------------------------------------
 // посылка сообщения объекту
 func (ui *UProxy) send(obj UObjecter, msg UMessage) {
@@ -424,6 +451,7 @@ func (ui *UProxy) send(obj UObjecter, msg UMessage) {
 		}
 	}
 }
+
 // ----------------------------------------------------------------------------------
 func (l *consumersList) String() string {
 
