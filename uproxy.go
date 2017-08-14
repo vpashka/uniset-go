@@ -6,7 +6,7 @@
 // Т.е. вся работа с внутренними структурами ведётся только из одной го-рутины (см. mainLoop)
 // А все public-функции работают через посылку сообщений, которые обрабатываются в mainLoop().
 // ---------
-// Для получения сообщений желающие должны реализовать интерфейс UObjecter и добавить себя в uproxy
+// Для получения сообщений желающие должны реализовать интерфейс UObject и добавить себя в uproxy
 // при помощи функции Add(). А дальше уже при помощи канала команд можно заказывать датчики,
 // а при помоищи канала "событий" получать уведомления об их изменении
 // ---------
@@ -47,8 +47,8 @@ type UProxy struct {
 	uniset_port int
 	uproxy      uniset_internal_api.UProxy
 	initOK      bool
-	omap        map[ObjectID]UObjecter // список зарегистрированных объектов
-	add         chan UObjecter
+	omap        map[ObjectID]UObject // список зарегистрированных объектов
+	add         chan UObject
 	msg         chan *SensorEvent
 }
 
@@ -66,8 +66,8 @@ func NewUProxy(name string, confile string, uniset_port int) *UProxy {
 	ui.confile = confile
 	ui.uniset_port = uniset_port
 	ui.initOK = false
-	ui.omap = make(map[ObjectID]UObjecter)
-	ui.add = make(chan UObjecter, 10)
+	ui.omap = make(map[ObjectID]UObject)
+	ui.add = make(chan UObject, 10)
 	ui.msg = make(chan *SensorEvent, 100)
 	return &ui
 }
@@ -81,8 +81,8 @@ func (ui *UProxy) IsActive() bool {
 }
 
 // ----------------------------------------------------------------------------------
-// Зарегистрировать UObjecter
-func (ui *UProxy) Add(obj UObjecter) {
+// Зарегистрировать UObject
+func (ui *UProxy) Add(obj UObject) {
 	ui.add <- obj
 }
 
@@ -91,7 +91,6 @@ func (ui *UProxy) Add(obj UObjecter) {
 func (ui *UProxy) Terminate() error {
 
 	if ui.IsActive() {
-		ui.uproxy.Terminate()
 		ui.setActive(false)
 		ui.term.Wait()
 	}
@@ -120,7 +119,7 @@ func (ui *UProxy) Run() error {
 
 	if !ui.initOK {
 
-		err := ui.uniset_init()
+		err := ui.doUnisetInit()
 		if err != nil {
 			return err
 		}
@@ -145,7 +144,7 @@ func (ui *UProxy) Run() error {
 
 	ui.setActive(true)
 
-	ui.term.Add(1)
+	ui.term.Add(2)
 
 	go ui.mainLoop()
 	go ui.doReadMessages()
@@ -168,7 +167,7 @@ func (ui *UProxy) GetValue(sid SensorID) (int64, error) {
 
 // ----------------------------------------------------------------------------------
 // инициализация
-func (ui *UProxy) uniset_init() error {
+func (ui *UProxy) doUnisetInit() error {
 
 	params := uniset_internal_api.ParamsInst()
 	params.Add_str("--confile")
@@ -248,6 +247,9 @@ func (ui *UProxy) mainLoop() {
 			}
 		}
 	}
+
+	ui.doFinish()
+	ui.uproxy.Terminate()
 }
 
 // ----------------------------------------------------------------------------------
@@ -255,6 +257,7 @@ func (ui *UProxy) mainLoop() {
 func (ui *UProxy) doReadMessages() {
 
 	defer ui.term.Done()
+
 	for {
 
 		m := ui.uproxy.SafeWaitMessage(5000)
@@ -277,7 +280,7 @@ func (ui *UProxy) doReadMessages() {
 
 // ----------------------------------------------------------------------------------
 // Добавление нового объекта
-func (ui *UProxy) doAdd(obj UObjecter) {
+func (ui *UProxy) doAdd(obj UObject) {
 
 	if ui.doAddObject(obj) {
 		umsg := UMessage{&ActivateEvent{}}
@@ -286,12 +289,16 @@ func (ui *UProxy) doAdd(obj UObjecter) {
 }
 
 // ----------------------------------------------------------------------------------
-// Рассылка всем уведомления о завершении работы
+// Рассылка всем уведомления о завершении работы и закрытие канала
 func (ui *UProxy) doFinish() {
 
 	msg := UMessage{&FinishEvent{}}
 	for _, obj := range ui.omap {
 		ui.send(obj, msg)
+	}
+
+	for _, obj := range ui.omap {
+		close(obj.UEvent())
 	}
 }
 
@@ -334,7 +341,7 @@ func (ui *UProxy) doCommands() bool {
 }
 
 // ----------------------------------------------------------------------------------
-func (ui *UProxy) doCommandFromObject(obj UObjecter) bool {
+func (ui *UProxy) doCommandFromObject(obj UObject) bool {
 
 	select {
 	case umsg, ok := <-obj.UCommand():
@@ -374,7 +381,7 @@ func (ui *UProxy) doCommandFromObject(obj UObjecter) bool {
 
 // ----------------------------------------------------------------------------------
 // обработка команды добавления объекта
-func (ui *UProxy) doAddObject(obj UObjecter) bool {
+func (ui *UProxy) doAddObject(obj UObject) bool {
 
 	_, found := ui.omap[obj.ID()]
 	if found {
@@ -387,17 +394,17 @@ func (ui *UProxy) doAddObject(obj UObjecter) bool {
 
 // ----------------------------------------------------------------------------------
 // обработка команды "заказ датчика"
-func (ui *UProxy) doAskSensor(sid SensorID, cons UObjecter) (msg *UMessage, err error) {
+func (ui *UProxy) doAskSensor(sid SensorID, cons UObject) (msg *UMessage, err error) {
 
-	//fmt.Printf("ASK SENSOR: %d for uobjecter %d\n",sid,cons.ID())
+	//fmt.Printf("ASK SENSOR: %d for uobjecter %d\n",Sid,cons.ID())
 
 	// На текущий момент uniset_internal_api.UProxy
 	// не поддерживает заказ датчиков..
 	// сперва делаем реальный заказ
-	//ret := ui.uproxy.SafeAskSensor(int64(sid))
+	//ret := ui.uproxy.SafeAskSensor(int64(Sid))
 	//
 	//if !ret.GetOk() {
-	//	return errors.New(fmt.Sprintf("%s (doAskSensor): sid=%d error: %s", ui.name, sid, ret.GetErr()))
+	//	return errors.New(fmt.Sprintf("%s (doAskSensor): Sid=%d error: %s", ui.name, Sid, ret.GetErr()))
 	//}
 
 	// Поэтому сперва получаем текущее значение
@@ -432,14 +439,14 @@ func (ui *UProxy) doAskSensor(sid SensorID, cons UObjecter) (msg *UMessage, err 
 func (ui *UProxy) sendMessage(msg *UMessage, l *consumersList) {
 
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObjecter)
+		c := e.Value.(UObject)
 		ui.send(c, *msg)
 	}
 }
 
 // ----------------------------------------------------------------------------------
 // посылка сообщения объекту
-func (ui *UProxy) send(obj UObjecter, msg UMessage) {
+func (ui *UProxy) send(obj UObject, msg UMessage) {
 
 	// делаем две попытки
 	for i := 0; i < 2; i++ {
@@ -458,7 +465,7 @@ func (l *consumersList) String() string {
 	var str string
 	str = "["
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObjecter)
+		c := e.Value.(UObject)
 		str = fmt.Sprintf("%s %d", str, c.ID())
 	}
 	str += " ]"
@@ -466,10 +473,10 @@ func (l *consumersList) String() string {
 }
 
 // ----------------------------------------------------------------------------------
-func (l *consumersList) add(cons UObjecter) {
+func (l *consumersList) add(cons UObject) {
 
 	for e := l.list.Front(); e != nil; e = e.Next() {
-		c := e.Value.(UObjecter)
+		c := e.Value.(UObject)
 		if c.ID() == cons.ID() {
 			return
 		}

@@ -15,7 +15,7 @@ const DefaultObjectID int64 = -1
 // ----------------------------------------------------------------------------------
 // Интерфейс который должны реализовать объекты
 // желающие подписаться на uniset-события
-type UObjecter interface {
+type UObject interface {
 	UEvent() chan<- UMessage
 	UCommand() <-chan UMessage
 	ID() ObjectID
@@ -23,14 +23,13 @@ type UObjecter interface {
 
 // ----------------------------------------------------------------------------------
 // Интерфейс для сообщений "обёртка"
-// имеет две вспомогательные функции Push(Msg) и Pop(Msg)
 type UMessage struct {
 	Msg interface{}
 	//Timestamp time.Time
 }
 
 // ----------------------------------------------------------------------------------
-// сообщение о том, что объект успешно активирован
+// сообщение о том, что объект успешно активирован и может начать работу
 type ActivateEvent struct {
 }
 
@@ -57,6 +56,32 @@ type SetValueCommand struct {
 	Id     SensorID
 	Value  int64
 	Result bool
+}
+
+// ----------------------------------------------------------------------------------
+// связывание sensor id и bool-поля структуры
+// для формирования списков входов и выходов
+type BoolValue struct {
+	Sid  *SensorID
+	Val  *bool
+	prev bool
+}
+
+func NewBoolValue(sid *SensorID, val *bool) *BoolValue {
+	return &BoolValue{sid, val, *val}
+}
+
+// ----------------------------------------------------------------------------------
+// связывание sensor id и int64-поля структуры
+// для формирования списков входов и выходов
+type Int64Value struct {
+	Sid  *SensorID
+	Val  *int64
+	prev int64
+}
+
+func NewInt64Value(sid *SensorID, val *int64) *Int64Value {
+	return &Int64Value{sid, val, *val}
 }
 
 // ----------------------------------------------------------------------------------
