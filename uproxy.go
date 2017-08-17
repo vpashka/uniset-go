@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -57,14 +56,12 @@ type UProxy struct {
 // в качестве аргумента передаётся идентификатор
 // используемый для создания c++-объекта
 // название uniset conf-файла и порт на котором работать
-func NewUProxy(name string, confile string, uniset_port int) *UProxy {
+func NewUProxy(name string) *UProxy {
 	ui := UProxy{}
 	ui.askmap = make(map[SensorID]*consumersList)
 	ui.active = false
 	ui.name = name
 	ui.id = ObjectID(DefaultObjectID)
-	ui.confile = confile
-	ui.uniset_port = uniset_port
 	ui.initOK = false
 	ui.omap = make(map[ObjectID]UObject)
 	ui.add = make(chan UObject, 10)
@@ -117,13 +114,11 @@ func (ui *UProxy) Run() error {
 		return nil
 	}
 
-	if !ui.initOK {
+	if !uniset_internal_api.IsUniSetInitOK() {
+		panic("Not uniset init...")
+	}
 
-		err := ui.doUnisetInit()
-		if err != nil {
-			return err
-		}
-
+	if( !ui.initOK ) {
 		ui.uproxy = uniset_internal_api.NewUProxy(ui.name)
 		ui.uproxy.Run(200)
 		ui.initOK = true
@@ -163,39 +158,6 @@ func (ui *UProxy) GetValue(sid SensorID) (int64, error) {
 	}
 
 	return ret.GetValue(), nil
-}
-
-// ----------------------------------------------------------------------------------
-// инициализация
-func (ui *UProxy) doUnisetInit() error {
-
-	params := uniset_internal_api.ParamsInst()
-	params.Add_str("--confile")
-	params.Add_str(ui.confile)
-
-	params.Add_str("--ulog-add-levels")
-	params.Add_str("system,crit,warn")
-
-	//params.Add_str("--UProxy1-log-add-levels")
-	//params.Add_str("any")
-
-	if ui.uniset_port > 0 {
-		uport := strconv.Itoa(ui.uniset_port)
-		params.Add_str("--uniset-port")
-		params.Add_str(uport)
-	}
-
-	err := uniset_internal_api.Uniset_init_params(params, ui.confile)
-	if !err.GetOk() {
-		return errors.New(err.GetErr())
-	}
-
-	ui.id = ObjectID(uniset_internal_api.GetObjectID(ui.name))
-	if ui.id == ObjectID(DefaultObjectID) {
-		return errors.New(fmt.Sprintf("UProxy::Uniset_init: Unknown ObjectID for %s", ui.name))
-	}
-
-	return nil
 }
 
 // ----------------------------------------------------------------------------------
