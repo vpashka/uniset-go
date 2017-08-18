@@ -1,5 +1,6 @@
-// Интерфейс для работы с uniset-датчиками
-// Основная идея:  подписка на уведомления об изменении датиков
+// Интерфейс для работы с uniset-системами
+// ( см. https://habrahabr.ru/post/278535/ )
+// Основная идея: "PUB-SUB" подписка на уведомления об изменении датиков
 // Пользователь реализует интерфейс UObject, предоставляющий канал
 // для посылки в него SensorEvent
 // Чтобы получать уведомления пользователь при помощи функции doAskSensor
@@ -10,13 +11,26 @@
 // а также уникальный ID.
 //
 // UProxy является фасадом для c++ объекта, который запускает в системе поток, для чтения дачиков.
-// После чего UProxy уже забирает у него сообщения об изменении датчиков и через go-каналы рассылает заказчикам.
-// Запуск и взаимодейтсвие осуществляться через go-обёртку (uniset_internal_api) входящую в состав uniset
+// После чего UProxy забирает у него сообщения об изменении датчиков (в отдельной go-рутине)
+// и через go-каналы рассылает заказчикам.
+// Для взаимодействия с c++ объектом используется uniset_internal_api входящий в состав uniset
 //
 // В общем случае, достаточно одного UProxy объекта на программу. Но тем не менее он не сделан singleton-ом
 // чтобы не ограничивать возможности
 //
-// \todo Обработка аргументов командной строки
+// До начала работы необходимо обязательно вызвать функцию uniset.Init() которая проинициализирует c++-часть
+// -------------------
+// Для того, чтобы просто читать или писать датчики (без подписки на события) достаточно использовать
+// uniset.UInterace() и UObject создавать не нужно.
+// -------------------
+// Т.к. основная работа UObject-ов это работа с датчиками, то для того, чтобы проще было писать объекты
+// реализующие нужную логику, создан генератор кода uniset2-codegen-go.
+// Его суть заключается в том, что в специальном xml-файле описываются входы и выходы объекта, по которым
+// генерируется базовая go-структура, которую достаточно просто встроить к себе в объект (как анонимное поле).
+// При этом объявленные входы и выходы объекта становяться доступны для использования как поля структуры.
+// про формат xml-файла можно (будет) почтитать здесь http://wiki.etersoft.ru/UniSet2/docs/page__codegen_go.html
+// Пример: https://github.com/....uniset-example-go
+// -------------------
 package uniset
 
 import (
@@ -25,9 +39,11 @@ import (
 	"uniset_internal_api"
 	"fmt"
 	"encoding/json"
+	"os"
 )
 
 type UConfig struct {
+	Name string // имя объекта для которого получены настройки
 	Config []UProp `json: "config"`
 }
 
@@ -36,33 +52,17 @@ type UProp struct {
 	Value string `json: "value"`
 }
 
+// Простой интерфейс для работы с uniset-датчиками (get/set)
 type UInterface struct {
 }
 
 func NewUInterface(confile string, uniset_port int) (*UInterface, error) {
 
+	if !uniset_internal_api.IsUniSetInitOK() {
+		return nil, errors.New("Not uniset init...")
+	}
+
 	ui := UInterface{}
-
-	params := uniset_internal_api.ParamsInst()
-	params.Add_str("--confile")
-	params.Add_str(confile)
-
-	//params.Add_str("--ulog-add-levels")
-	//params.Add_str("any")
-	//
-	//params.Add_str("--UProxy1-log-add-levels")
-	//params.Add_str("any")
-
-	if uniset_port > 0 {
-		uport := strconv.Itoa(uniset_port)
-		params.Add_str("--uniset-port")
-		params.Add_str(uport)
-	}
-
-	err := uniset_internal_api.Uniset_init_params(params, confile)
-	if !err.GetOk() {
-		return nil, errors.New(err.GetErr())
-	}
 
 	return &ui, nil
 }
@@ -88,20 +88,15 @@ func (ui *UInterface) GetValue(sid SensorID) (int64, error) {
 
 // ----------------------------------------------------------------------------------
 // глобальная инициализация
-// \todo Сделать обработку аргументов командной строки (flag)
-func Init(confile string, uniset_port int) {
+func Init(confile string) {
 
-	params := uniset_internal_api.ParamsInst()
-	params.Add_str("--confile")
-	params.Add_str(confile)
+	cmdline := uniset_internal_api.ParamsInst()
 
-	if uniset_port > 0 {
-		uport := strconv.Itoa(uniset_port)
-		params.Add_str("--uniset-port")
-		params.Add_str(uport)
+	for _, p := range os.Args {
+		cmdline.Add_str(p)
 	}
 
-	err := uniset_internal_api.Uniset_init_params(params, confile)
+	err := uniset_internal_api.Uniset_init_params(cmdline, confile)
 	if !err.GetOk() {
 		panic(err.GetErr())
 	}
@@ -178,7 +173,41 @@ func DoReadInputs(inputs *[]*Int64Value) {
 }
 
 // ----------------------------------------------------------------------------------
+// получить аргумент из командной строки
+func GetArgParam( param string, defval string ) string {
+
+	argc := len(os.Args)
+
+	for i:=0; i<argc; i++ {
+
+		if os.Args[i] == param {
+			if (i+1) < argc {
+				return os.Args[i+1]
+			}
+			panic(fmt.Sprintf("(uniset.GetArgParam): error: required argument for %s",param))
+		}
+	}
+
+	return defval
+}
+// ----------------------------------------------------------------------------------
+// функция получения значения для указанного свойства.
+// Выбор делается по следующему приоритету:
+// если задан аргумент в командной строке, то выбирается он
+// если нет, смотрим config, если там тоже нет, то возвращаем defval
+// При этом в командной строке ищется значение --name-propname
+//
 func PropValueByName( cfg *UConfig, propname string, defval string ) string {
+
+	if len(propname) == 0 {
+		return defval
+	}
+
+	p := GetArgParam(fmt.Sprintf("--%s-%s",cfg.Name,propname),"")
+
+	if( len(p)!=0 ){
+		return p;
+	}
 
 	for _, v := range cfg.Config {
 
@@ -289,6 +318,7 @@ func GetConfigParamsByName(name string, section string) (*UConfig, error) {
 	}
 
 	cfg := UConfig{}
+	cfg.Name = name;
 	bytes := []byte(jstr)
 
 	err := json.Unmarshal(bytes, &cfg)
