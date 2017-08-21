@@ -34,7 +34,7 @@ func (c *TestObject) UCommand() <-chan uniset.UMessage {
 }
 
 // -----------------------------------------------------------------------------
-func (c *TestObject) AskSensor(sid uniset.SensorID) {
+func (c *TestObject) AskSensor(sid uniset.ObjectID) {
 	c.wchannel <- uniset.UMessage{&uniset.AskCommand{sid, false}}
 }
 
@@ -166,7 +166,7 @@ func TestUMessage2CmdSetValue(t *testing.T) {
 }
 
 // ----------------------------------------------------------------
-func (c *TestObject) read(t *testing.T, sid uniset.SensorID, timeout_msec int, wg *sync.WaitGroup) int {
+func (c *TestObject) read(t *testing.T, sid uniset.ObjectID, timeout_msec int, wg *sync.WaitGroup) int {
 
 	defer wg.Done()
 
@@ -234,7 +234,7 @@ func TestGetValue(t *testing.T) {
 // ----------------------------------------------------------------
 // Тест заказа датчика (многопоточный заказ)
 // ----------------------------------------------------------------
-func doAskSensors(t *testing.T, sid uniset.SensorID, list []*TestObject, wg *sync.WaitGroup) {
+func doAskSensors(t *testing.T, sid uniset.ObjectID, list []*TestObject, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
@@ -290,7 +290,7 @@ func TestUWorking(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	var sid uniset.SensorID = 20
+	var sid uniset.ObjectID = 20
 
 	go doAskSensors(t, sid, clist[0:maxNum], &wg)
 

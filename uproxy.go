@@ -36,7 +36,7 @@ type consumersList struct {
 // преобразуя их в события в go-каналах.
 // Следует иметь ввиду, что c++-ый Proxy сам создаётся ещё потоки в системе необходимые ему для работы
 type UProxy struct {
-	askmap      map[SensorID]*consumersList
+	askmap      map[ObjectID]*consumersList
 	active      bool
 	actmutex    sync.RWMutex
 	term        sync.WaitGroup
@@ -55,17 +55,18 @@ type UProxy struct {
 // Создание UProxy
 // в качестве аргумента передаётся идентификатор
 // используемый для создания c++-объекта
-// название uniset conf-файла и порт на котором работать
-func NewUProxy(name string) *UProxy {
+// mqSize - размер очереди для сообщений об изменении датчиков (приходящих от uniset)
+// oqSize - размер очереди для активации объектов
+func NewUProxy(name string, mqSize uint, oqSize uint ) *UProxy {
 	ui := UProxy{}
-	ui.askmap = make(map[SensorID]*consumersList)
+	ui.askmap = make(map[ObjectID]*consumersList)
 	ui.active = false
 	ui.name = name
 	ui.id = ObjectID(DefaultObjectID)
 	ui.initOK = false
 	ui.omap = make(map[ObjectID]UObject)
-	ui.add = make(chan UObject, 10)
-	ui.msg = make(chan *SensorEvent, 100)
+	ui.add = make(chan UObject, oqSize)
+	ui.msg = make(chan *SensorEvent, mqSize)
 	return &ui
 }
 
@@ -149,7 +150,7 @@ func (ui *UProxy) Run() error {
 
 // ----------------------------------------------------------------------------------
 // получить значение (напрямую из proxy)
-func (ui *UProxy) GetValue(sid SensorID) (int64, error) {
+func (ui *UProxy) GetValue(sid ObjectID) (int64, error) {
 
 	ret := ui.uproxy.SafeGetValue(int64(sid))
 
@@ -266,7 +267,7 @@ func (ui *UProxy) doFinish() {
 
 // ----------------------------------------------------------------------------------
 // обработка команды "установить значение"
-func (ui *UProxy) doSetValue(sid SensorID, value int64, supplier ObjectID) error {
+func (ui *UProxy) doSetValue(sid ObjectID, value int64, supplier ObjectID) error {
 
 	ret := ui.uproxy.SafeSetValue(int64(sid), value)
 	if !ret.GetOk() {
@@ -281,7 +282,7 @@ func (ui *UProxy) doSensorEvent(m *SensorEvent) {
 
 	lst, found := ui.askmap[m.Id]
 	if !found {
-		fmt.Printf("sensor %d not found in askmap\n", m.Id)
+		//fmt.Printf("sensor %d not found in askmap\n", m.Id)
 		return
 	}
 
@@ -356,7 +357,7 @@ func (ui *UProxy) doAddObject(obj UObject) bool {
 
 // ----------------------------------------------------------------------------------
 // обработка команды "заказ датчика"
-func (ui *UProxy) doAskSensor(sid SensorID, cons UObject) (msg *UMessage, err error) {
+func (ui *UProxy) doAskSensor(sid ObjectID, cons UObject) (msg *UMessage, err error) {
 
 	//fmt.Printf("ASK SENSOR: %d for uobjecter %d\n",Sid,cons.ID())
 

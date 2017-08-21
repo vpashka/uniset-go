@@ -29,7 +29,9 @@
 // генерируется базовая go-структура, которую достаточно просто встроить к себе в объект (как анонимное поле).
 // При этом объявленные входы и выходы объекта становяться доступны для использования как поля структуры.
 // про формат xml-файла можно (будет) почтитать здесь http://wiki.etersoft.ru/UniSet2/docs/page__codegen_go.html
-// Пример: https://github.com/....uniset-example-go
+// Пример: https://github.com/vpashka/uniset-example-go
+//
+// \todo логирование для объектов
 // -------------------
 package uniset
 
@@ -67,7 +69,7 @@ func NewUInterface(confile string, uniset_port int) (*UInterface, error) {
 	return &ui, nil
 }
 // ----------------------------------------------------------------------------------
-func (ui *UInterface) SetValue(sid SensorID, value int64, supplier ObjectID) error {
+func (ui *UInterface) SetValue(sid ObjectID, value int64, supplier ObjectID) error {
 
 	err := uniset_internal_api.SetValue(int64(sid), value, int64(supplier))
 
@@ -77,7 +79,7 @@ func (ui *UInterface) SetValue(sid SensorID, value int64, supplier ObjectID) err
 	return nil
 }
 // ----------------------------------------------------------------------------------
-func (ui *UInterface) GetValue(sid SensorID) (int64, error) {
+func (ui *UInterface) GetValue(sid ObjectID) (int64, error) {
 	err := uniset_internal_api.GetValue(int64(sid))
 	if !err.GetOk() {
 		return 0, errors.New(err.GetErr())
@@ -103,14 +105,14 @@ func Init(confile string) {
 }
 // ----------------------------------------------------------------------------------
 // обобщённая вспомогательная функция - обёртка для заказа датчиков
-func AskSensor(ch chan<- UMessage, sid SensorID) {
+func AskSensor(ch chan<- UMessage, sid ObjectID) {
 
 	ch <- UMessage{&AskCommand{sid, false}}
 }
 
 // ----------------------------------------------------------------------------------
 // обобщённая вспомогательная функция - обёртка для выставления значения
-func SetValue(ch chan<- UMessage, sid SensorID, value int64) {
+func SetValue(ch chan<- UMessage, sid ObjectID, value int64) {
 
 	ch <- UMessage{&SetValueCommand{sid, value, false}}
 }
@@ -130,7 +132,7 @@ func DoUpdateInputs(inputs *[]*Int64Value, sm *SensorEvent) {
 
 // ----------------------------------------------------------------------------------
 // обобщённая вспомогательная функция
-// обновление аналоговых-значений в SM
+// обновление выходов в SM
 // Проходим по списку и если значение поменялось, относительно предыдущего
 // обновляем в SM (SetValue)
 func DoUpdateOutputs(outs *[]*Int64Value, cmdchannel chan<- UMessage) {
@@ -148,7 +150,7 @@ func DoUpdateOutputs(outs *[]*Int64Value, cmdchannel chan<- UMessage) {
 
 // ----------------------------------------------------------------------------------
 // обобщённая вспомогательная функция
-// заказ аналоговых датчиков
+// заказ датчиков (входов)
 func DoAskSensors(inputs *[]*Int64Value, cmdchannel chan<- UMessage) {
 
 	for _, s := range *inputs {
@@ -158,7 +160,7 @@ func DoAskSensors(inputs *[]*Int64Value, cmdchannel chan<- UMessage) {
 
 // ----------------------------------------------------------------------------------
 // обобщённая вспомогательная функция
-// обновление аналоговых значений из SM
+// чтение входов из SM
 func DoReadInputs(inputs *[]*Int64Value) {
 
 	for _, s := range *inputs {
@@ -192,7 +194,7 @@ func GetArgParam( param string, defval string ) string {
 }
 // ----------------------------------------------------------------------------------
 // функция получения значения для указанного свойства.
-// Выбор делается по следующему приоритету:
+// Выбор делается по приоритету:
 // если задан аргумент в командной строке, то выбирается он
 // если нет, смотрим config, если там тоже нет, то возвращаем defval
 // При этом в командной строке ищется значение --name-propname
@@ -228,7 +230,7 @@ func InitInt32( cfg *UConfig, propname string, defval string ) int32 {
 
 	i, err := strconv.ParseInt(sval, 10, 32)
 	if err != nil{
-		panic(fmt.Sprintf("(Init_Imitator_SK): convert type '%s' error: %s", propname, err))
+		panic(fmt.Sprintf("(uniset.InitInt32): convert type '%s' error: %s", propname, err))
 	}
 
 	return int32(i)
@@ -243,7 +245,7 @@ func InitInt64( cfg *UConfig, propname string, defval string ) int64 {
 
 	i, err := strconv.ParseInt(sval, 10, 64)
 	if err != nil{
-		panic(fmt.Sprintf("(Init_Imitator_SK): convert type '%s' error: %s", propname, err))
+		panic(fmt.Sprintf("(uniset.InitInt64): convert type '%s' error: %s", propname, err))
 	}
 
 	return i
@@ -257,7 +259,7 @@ func InitFloat32( cfg *UConfig, propname string, defval string ) float32 {
 	}
 	i, err := strconv.ParseFloat(sval, 32)
 	if err != nil{
-		panic(fmt.Sprintf("(Init_Imitator_SK): convert type '%s' error: %s", propname, err))
+		panic(fmt.Sprintf("(uniset.InitFloat32): convert type '%s' error: %s", propname, err))
 	}
 
 	return float32(i)
@@ -272,7 +274,7 @@ func InitFloat64( cfg *UConfig, propname string, defval string ) float64 {
 
 	i, err := strconv.ParseFloat(sval, 64)
 	if err != nil{
-		panic(fmt.Sprintf("(Init_Imitator_SK): convert type '%s' error: %s", propname, err))
+		panic(fmt.Sprintf("(uniset.InitFloat64): convert type '%s' error: %s", propname, err))
 	}
 
 	return i
@@ -287,7 +289,7 @@ func InitBool( cfg *UConfig, propname string, defval string ) bool {
 
 	i, err := strconv.ParseBool(sval)
 	if err != nil{
-		panic(fmt.Sprintf("(Init_Imitator_SK): convert type '%s' error: %s", propname, err))
+		panic(fmt.Sprintf("(uniset.InitBool): convert type '%s' error: %s", propname, err))
 	}
 
 	return i
@@ -298,10 +300,10 @@ func InitString( cfg *UConfig, propname string, defval string ) string {
 	return PropValueByName(cfg,propname,defval)
 }
 // ----------------------------------------------------------------------------------
-func InitSensorID( cfg *UConfig, propname string, defval string ) SensorID {
+func InitSensorID( cfg *UConfig, propname string, defval string ) ObjectID {
 
-	//fmt.Printf("init sensorID %s ret=%d\n",propname,uniset_internal_api.GetSensorID(PropValueByName(cfg,propname)))
-	return SensorID(uniset_internal_api.GetSensorID(PropValueByName(cfg,propname,defval)))
+	//fmt.Printf("init sensorID %s ret=%d\n",propname,uniset_internal_api.GetObjectID(PropValueByName(cfg,propname)))
+	return ObjectID(uniset_internal_api.GetSensorID(PropValueByName(cfg,propname,defval)))
 }
 // ----------------------------------------------------------------------------------
 func InitObjectID( cfg *UConfig, propname string, defval string ) ObjectID {

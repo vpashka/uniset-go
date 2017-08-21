@@ -7,10 +7,9 @@ import (
 	"uniset_internal_api"
 )
 
-type SensorID int64
 type ObjectID int64
 
-const DefaultObjectID int64 = -1
+const DefaultObjectID ObjectID = -1
 
 // ----------------------------------------------------------------------------------
 // Интерфейс который должны реализовать объекты
@@ -40,20 +39,20 @@ type FinishEvent struct {
 
 // ----------------------------------------------------------------------------------
 type SensorEvent struct {
-	Id        SensorID
+	Id        ObjectID
 	Value     int64
 	Timestamp time.Time
 }
 
 // ----------------------------------------------------------------------------------
 type AskCommand struct {
-	Id     SensorID
+	Id     ObjectID
 	Result bool
 }
 
 // ----------------------------------------------------------------------------------
 type SetValueCommand struct {
-	Id     SensorID
+	Id     ObjectID
 	Value  int64
 	Result bool
 }
@@ -62,12 +61,12 @@ type SetValueCommand struct {
 // связывание sensor id и bool-поля структуры
 // для формирования списков входов и выходов
 type BoolValue struct {
-	Sid  *SensorID
+	Sid  *ObjectID
 	Val  *bool
 	prev bool
 }
 
-func NewBoolValue(sid *SensorID, val *bool) *BoolValue {
+func NewBoolValue(sid *ObjectID, val *bool) *BoolValue {
 	return &BoolValue{sid, val, *val}
 }
 
@@ -75,12 +74,12 @@ func NewBoolValue(sid *SensorID, val *bool) *BoolValue {
 // связывание sensor id и int64-поля структуры
 // для формирования списков входов и выходов
 type Int64Value struct {
-	Sid  *SensorID
+	Sid  *ObjectID
 	Val  *int64
 	prev int64
 }
 
-func NewInt64Value(sid *SensorID, val *int64) *Int64Value {
+func NewInt64Value(sid *ObjectID, val *int64) *Int64Value {
 	return &Int64Value{sid, val, *val}
 }
 
@@ -173,7 +172,7 @@ func (m *SensorEvent) String() string {
 // ----------------------------------------------------------------------------------
 func makeSensorEvent(m uniset_internal_api.ShortIOInfo) *SensorEvent {
 	var msg SensorEvent
-	msg.Id = SensorID(m.GetId())
+	msg.Id = ObjectID(m.GetId())
 	msg.Value = m.GetValue()
 	msg.Timestamp = time.Unix(m.GetTv_sec(), m.GetTv_nsec())
 	return &msg
