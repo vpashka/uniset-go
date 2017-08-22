@@ -24,31 +24,35 @@ import (
 	"uniset_internal_api"
 )
 
-// внутренний список объектов
-type consumersList struct {
-	list list.List
-}
-
 // ----------------------------------------------------------------------------------
 // Объект через который идёт всё взаимодействие с uniset-системой
 // При своём запуске Run() создаётся c++-ный объект который реально работает
 // с uniset-системой, а UProxy проксирует запросы к нему и обработку сообщений
 // преобразуя их в события в go-каналах.
-// Следует иметь ввиду, что c++-ый Proxy сам создаётся ещё потоки в системе необходимые ему для работы
+// Следует иметь ввиду, что c++-ый Proxy ещё сам создаёт потоки в системе необходимые ему для работы
 type UProxy struct {
-	askmap      map[ObjectID]*consumersList
-	active      bool
-	actmutex    sync.RWMutex
-	term        sync.WaitGroup
-	name        string
-	id          ObjectID
-	confile     string
-	uniset_port int
-	uproxy      uniset_internal_api.UProxy
-	initOK      bool
-	omap        map[ObjectID]UObject // список зарегистрированных объектов
-	add         chan UObject
-	msg         chan *SensorEvent
+	askmap       map[ObjectID]*consumersList
+	active       bool
+	actmutex     sync.RWMutex
+	term         sync.WaitGroup
+	name         string
+	id           ObjectID
+	confile      string
+	uniset_port  int
+	uproxy       uniset_internal_api.UProxy
+	initOK       bool
+	omap         map[ObjectID]UObject // список зарегистрированных объектов
+	add          chan UObject
+	msg          chan *SensorEvent
+	eventTimeout uint
+	pollTimeout  uint
+}
+
+// ----------------------------------------------------------------------------------
+// Создание UProxy со значениями по умолчанию
+// см. NewUProxy(..)
+func NewDefaultUProxy(name string) *UProxy {
+	return NewUProxy(name, 2000, 20, 5000, 200)
 }
 
 // ----------------------------------------------------------------------------------
@@ -57,7 +61,9 @@ type UProxy struct {
 // используемый для создания c++-объекта
 // mqSize - размер очереди для сообщений об изменении датчиков (приходящих от uniset)
 // oqSize - размер очереди для активации объектов
-func NewUProxy(name string, mqSize uint, oqSize uint ) *UProxy {
+// eventTimeout - timeout (msec) на получение сообщений от uniset-системы
+// pollSensorsTime - период обновления информации о состоянии датчиков (используемой в c++-объекте)
+func NewUProxy(name string, mqSize uint, oqSize uint, eventTimeout uint, pollSensorsTimeout uint) *UProxy {
 	ui := UProxy{}
 	ui.askmap = make(map[ObjectID]*consumersList)
 	ui.active = false
@@ -67,6 +73,9 @@ func NewUProxy(name string, mqSize uint, oqSize uint ) *UProxy {
 	ui.omap = make(map[ObjectID]UObject)
 	ui.add = make(chan UObject, oqSize)
 	ui.msg = make(chan *SensorEvent, mqSize)
+	ui.eventTimeout = eventTimeout
+	ui.pollTimeout = pollSensorsTimeout
+
 	return &ui
 }
 
@@ -119,9 +128,9 @@ func (ui *UProxy) Run() error {
 		panic("Not uniset init...")
 	}
 
-	if( !ui.initOK ) {
+	if !ui.initOK {
 		ui.uproxy = uniset_internal_api.NewUProxy(ui.name)
-		ui.uproxy.Run(200)
+		ui.uproxy.Run(int(ui.pollTimeout))
 		ui.initOK = true
 
 		signalChannel := make(chan os.Signal, 2)
@@ -446,6 +455,12 @@ func (l *consumersList) add(cons UObject) {
 	}
 
 	l.list.PushBack(cons)
+}
+
+// ----------------------------------------------------------------------------------
+// внутренний список объектов
+type consumersList struct {
+	list list.List
 }
 
 // ----------------------------------------------------------------------------------

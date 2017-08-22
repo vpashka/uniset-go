@@ -36,21 +36,21 @@
 package uniset
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"strconv"
 	"uniset_internal_api"
-	"fmt"
-	"encoding/json"
-	"os"
 )
 
 type UConfig struct {
-	Name string // имя объекта для которого получены настройки
+	Name   string  // имя объекта для которого получены настройки
 	Config []UProp `json: "config"`
 }
 
 type UProp struct {
-	Prop string  `json: "prop"`
+	Prop  string `json: "prop"`
 	Value string `json: "value"`
 }
 
@@ -68,6 +68,7 @@ func NewUInterface(confile string, uniset_port int) (*UInterface, error) {
 
 	return &ui, nil
 }
+
 // ----------------------------------------------------------------------------------
 func (ui *UInterface) SetValue(sid ObjectID, value int64, supplier ObjectID) error {
 
@@ -78,6 +79,7 @@ func (ui *UInterface) SetValue(sid ObjectID, value int64, supplier ObjectID) err
 	}
 	return nil
 }
+
 // ----------------------------------------------------------------------------------
 func (ui *UInterface) GetValue(sid ObjectID) (int64, error) {
 	err := uniset_internal_api.GetValue(int64(sid))
@@ -103,6 +105,7 @@ func Init(confile string) {
 		panic(err.GetErr())
 	}
 }
+
 // ----------------------------------------------------------------------------------
 // обобщённая вспомогательная функция - обёртка для заказа датчиков
 func AskSensor(ch chan<- UMessage, sid ObjectID) {
@@ -176,22 +179,23 @@ func DoReadInputs(inputs *[]*Int64Value) {
 
 // ----------------------------------------------------------------------------------
 // получить аргумент из командной строки
-func GetArgParam( param string, defval string ) string {
+func GetArgParam(param string, defval string) string {
 
 	argc := len(os.Args)
 
-	for i:=0; i<argc; i++ {
+	for i := 0; i < argc; i++ {
 
 		if os.Args[i] == param {
-			if (i+1) < argc {
+			if (i + 1) < argc {
 				return os.Args[i+1]
 			}
-			panic(fmt.Sprintf("(uniset.GetArgParam): error: required argument for %s",param))
+			panic(fmt.Sprintf("(uniset.GetArgParam): error: required argument for %s", param))
 		}
 	}
 
 	return defval
 }
+
 // ----------------------------------------------------------------------------------
 // функция получения значения для указанного свойства.
 // Выбор делается по приоритету:
@@ -199,16 +203,16 @@ func GetArgParam( param string, defval string ) string {
 // если нет, смотрим config, если там тоже нет, то возвращаем defval
 // При этом в командной строке ищется значение --name-propname
 //
-func PropValueByName( cfg *UConfig, propname string, defval string ) string {
+func PropValueByName(cfg *UConfig, propname string, defval string) string {
 
 	if len(propname) == 0 {
 		return defval
 	}
 
-	p := GetArgParam(fmt.Sprintf("--%s-%s",cfg.Name,propname),"")
+	p := GetArgParam(fmt.Sprintf("--%s-%s", cfg.Name, propname), "")
 
-	if( len(p)!=0 ){
-		return p;
+	if len(p) != 0 {
+		return p
 	}
 
 	for _, v := range cfg.Config {
@@ -220,96 +224,105 @@ func PropValueByName( cfg *UConfig, propname string, defval string ) string {
 
 	return defval
 }
-// ----------------------------------------------------------------------------------
-func InitInt32( cfg *UConfig, propname string, defval string ) int32 {
 
-	sval := PropValueByName(cfg,propname,defval)
+// ----------------------------------------------------------------------------------
+func InitInt32(cfg *UConfig, propname string, defval string) int32 {
+
+	sval := PropValueByName(cfg, propname, defval)
 	if len(sval) == 0 {
 		return 0
 	}
 
 	i, err := strconv.ParseInt(sval, 10, 32)
-	if err != nil{
+	if err != nil {
 		panic(fmt.Sprintf("(uniset.InitInt32): convert type '%s' error: %s", propname, err))
 	}
 
 	return int32(i)
 }
-// ----------------------------------------------------------------------------------
-func InitInt64( cfg *UConfig, propname string, defval string ) int64 {
 
-	sval := PropValueByName(cfg,propname,defval)
+// ----------------------------------------------------------------------------------
+func InitInt64(cfg *UConfig, propname string, defval string) int64 {
+
+	sval := PropValueByName(cfg, propname, defval)
 	if len(sval) == 0 {
 		return 0
 	}
 
 	i, err := strconv.ParseInt(sval, 10, 64)
-	if err != nil{
+	if err != nil {
 		panic(fmt.Sprintf("(uniset.InitInt64): convert type '%s' error: %s", propname, err))
 	}
 
 	return i
 }
-// ----------------------------------------------------------------------------------
-func InitFloat32( cfg *UConfig, propname string, defval string ) float32 {
 
-	sval := PropValueByName(cfg,propname,defval)
+// ----------------------------------------------------------------------------------
+func InitFloat32(cfg *UConfig, propname string, defval string) float32 {
+
+	sval := PropValueByName(cfg, propname, defval)
 	if len(sval) == 0 {
 		return 0.0
 	}
 	i, err := strconv.ParseFloat(sval, 32)
-	if err != nil{
+	if err != nil {
 		panic(fmt.Sprintf("(uniset.InitFloat32): convert type '%s' error: %s", propname, err))
 	}
 
 	return float32(i)
 }
-// ----------------------------------------------------------------------------------
-func InitFloat64( cfg *UConfig, propname string, defval string ) float64 {
 
-	sval := PropValueByName(cfg,propname,defval)
+// ----------------------------------------------------------------------------------
+func InitFloat64(cfg *UConfig, propname string, defval string) float64 {
+
+	sval := PropValueByName(cfg, propname, defval)
 	if len(sval) == 0 {
 		return 0.0
 	}
 
 	i, err := strconv.ParseFloat(sval, 64)
-	if err != nil{
+	if err != nil {
 		panic(fmt.Sprintf("(uniset.InitFloat64): convert type '%s' error: %s", propname, err))
 	}
 
 	return i
 }
-// ----------------------------------------------------------------------------------
-func InitBool( cfg *UConfig, propname string, defval string ) bool {
 
-	sval := PropValueByName(cfg,propname,defval)
+// ----------------------------------------------------------------------------------
+func InitBool(cfg *UConfig, propname string, defval string) bool {
+
+	sval := PropValueByName(cfg, propname, defval)
 	if len(sval) == 0 {
 		return false
 	}
 
 	i, err := strconv.ParseBool(sval)
-	if err != nil{
+	if err != nil {
 		panic(fmt.Sprintf("(uniset.InitBool): convert type '%s' error: %s", propname, err))
 	}
 
 	return i
 }
-// ----------------------------------------------------------------------------------
-func InitString( cfg *UConfig, propname string, defval string ) string {
 
-	return PropValueByName(cfg,propname,defval)
-}
 // ----------------------------------------------------------------------------------
-func InitSensorID( cfg *UConfig, propname string, defval string ) ObjectID {
+func InitString(cfg *UConfig, propname string, defval string) string {
+
+	return PropValueByName(cfg, propname, defval)
+}
+
+// ----------------------------------------------------------------------------------
+func InitSensorID(cfg *UConfig, propname string, defval string) ObjectID {
 
 	//fmt.Printf("init sensorID %s ret=%d\n",propname,uniset_internal_api.GetObjectID(PropValueByName(cfg,propname)))
-	return ObjectID(uniset_internal_api.GetSensorID(PropValueByName(cfg,propname,defval)))
+	return ObjectID(uniset_internal_api.GetSensorID(PropValueByName(cfg, propname, defval)))
 }
-// ----------------------------------------------------------------------------------
-func InitObjectID( cfg *UConfig, propname string, defval string ) ObjectID {
 
-	return ObjectID(uniset_internal_api.GetObjectID(PropValueByName(cfg,propname,defval)))
+// ----------------------------------------------------------------------------------
+func InitObjectID(cfg *UConfig, propname string, defval string) ObjectID {
+
+	return ObjectID(uniset_internal_api.GetObjectID(PropValueByName(cfg, propname, defval)))
 }
+
 // ----------------------------------------------------------------------------------
 func GetConfigParamsByName(name string, section string) (*UConfig, error) {
 
@@ -320,7 +333,7 @@ func GetConfigParamsByName(name string, section string) (*UConfig, error) {
 	}
 
 	cfg := UConfig{}
-	cfg.Name = name;
+	cfg.Name = name
 	bytes := []byte(jstr)
 
 	err := json.Unmarshal(bytes, &cfg)
@@ -328,6 +341,7 @@ func GetConfigParamsByName(name string, section string) (*UConfig, error) {
 		return nil, errors.New(fmt.Sprintf("(GetConfigParamsByName): error: %s", err))
 	}
 
-	return &cfg, nil;
+	return &cfg, nil
 }
+
 // ----------------------------------------------------------------------------------

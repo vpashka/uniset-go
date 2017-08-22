@@ -145,7 +145,7 @@ func TestUMessage2CmdAskSensor(t *testing.T) {
 // ----------------------------------------------------------------
 func TestUMessage2CmdSetValue(t *testing.T) {
 
-	m := uniset.SetValueCommand{Id:1, Value: 4000, Result: false}
+	m := uniset.SetValueCommand{Id: 1, Value: 4000, Result: false}
 	u := uniset.UMessage{Msg: &m}
 
 	_, ok := u.PopAsAskCommand()
